@@ -142,11 +142,21 @@ mkdir -p "${staging}/scripts"
 cp "${SOURCE_DIR}/scripts/upgrade.sh" "${staging}/scripts/upgrade.sh"
 cp "${SOURCE_DIR}/scripts/uninstall.sh" "${staging}/scripts/uninstall.sh"
 cp "${SOURCE_DIR}/scripts/version-compare.mjs" "${staging}/scripts/version-compare.mjs"
+if [[ -f "${SOURCE_DIR}/scripts/verify-systemd-unit.mjs" ]]; then
+  cp "${SOURCE_DIR}/scripts/verify-systemd-unit.mjs" "${staging}/scripts/verify-systemd-unit.mjs"
+fi
 cp "${SOURCE_DIR}/package.json" "${SOURCE_DIR}/package-lock.json" "${staging}/"
 if [[ -f "${SOURCE_DIR}/config.example.json" ]]; then
   cp "${SOURCE_DIR}/config.example.json" "${staging}/"
 fi
+if [[ -d "${SOURCE_DIR}/deploy/systemd" ]]; then
+  mkdir -p "${staging}/deploy"
+  cp -R "${SOURCE_DIR}/deploy/systemd" "${staging}/deploy/systemd"
+fi
 chmod 755 "${staging}/scripts/upgrade.sh" "${staging}/scripts/uninstall.sh" "${staging}/scripts/version-compare.mjs"
+if [[ -f "${staging}/scripts/verify-systemd-unit.mjs" ]]; then
+  chmod 755 "${staging}/scripts/verify-systemd-unit.mjs"
+fi
 
 (
   cd "${staging}"

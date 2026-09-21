@@ -6,6 +6,7 @@ import {
   createAgentDockServer,
 } from "./server.js";
 import { listenAgentDockHttpFromConfig } from "./http-server.js";
+import { installSignalHandlers } from "./service-lifecycle.js";
 
 const { config } = loadAgentDockConfig();
 
@@ -15,19 +16,19 @@ if (config.transport.mode === "http") {
     `AgentDock Streamable HTTP listening on http://${instance.host}:${instance.port}${instance.mcpPath}`,
   );
 
-  let shuttingDown = false;
-  async function shutdown(signal) {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    console.error(`AgentDock HTTP received ${signal}; shutting down.`);
-    await instance.close();
-    process.exit(0);
-  }
-
-  process.on("SIGINT", () => void shutdown("SIGINT"));
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  installSignalHandlers({
+    runtime: instance.runtime,
+    beginShutdown: () => instance.beginShutdown(),
+    closeTransport: () => instance.close(),
+  });
 } else {
   const runtime = createAgentDockRuntime({ config });
-  serveStdio(() => createAgentDockServer({ runtime }).server);
+  const stdio = serveStdio(
+    () => createAgentDockServer({ runtime }).server,
+  );
+  installSignalHandlers({
+    runtime,
+    closeTransport: () => stdio.close(),
+  });
   console.error("AgentDock MCP server running on stdio (2026-07-28 capable)");
 }

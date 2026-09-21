@@ -66,7 +66,7 @@ test("v0.2-05: release artifacts are reproducible and install without .git", asy
   assert.match(first.stdout, /ARTIFACT=/);
   assert.match(second.stdout, /ARTIFACT=/);
 
-  const name = "agentdock-mcp-harness-v0.2.0-dev.5.tar.gz";
+  const name = "agentdock-mcp-harness-v0.2.0-dev.6.tar.gz";
   const tgz1 = path.join(out1, name);
   const tgz2 = path.join(out2, name);
   const sha1 = (
@@ -82,7 +82,7 @@ test("v0.2-05: release artifacts are reproducible and install without .git", asy
   await run("sha256sum", ["-c", name + ".sha256"], { cwd: out1 });
 
   const listing = (await run("tar", ["-tzf", tgz1])).stdout;
-  const prefix = "agentdock-mcp-harness-0.2.0-dev.5/";
+  const prefix = "agentdock-mcp-harness-0.2.0-dev.6/";
   for (const expected of [
     prefix + "package.json",
     prefix + "scripts/install.sh",
@@ -103,7 +103,7 @@ test("v0.2-05: release artifacts are reproducible and install without .git", asy
 
   const extracted = path.join(
     extract,
-    "agentdock-mcp-harness-0.2.0-dev.5",
+    "agentdock-mcp-harness-0.2.0-dev.6",
   );
   assert.equal(
     await run("sh", ["-c", "test ! -e .git"], { cwd: extracted })
@@ -136,12 +136,39 @@ test("v0.2-05: release artifacts are reproducible and install without .git", asy
     { cwd: extracted, env },
   );
 
+  const installedUnit = path.join(
+    installDir,
+    "deploy",
+    "systemd",
+    "agentdock-http.service",
+  );
+  assert.match(
+    await readFile(installedUnit, "utf8"),
+    /^Restart=always$/m,
+  );
+  const verifiedUnit = await run(
+    process.execPath,
+    [
+      path.join(
+        installDir,
+        "scripts",
+        "verify-systemd-unit.mjs",
+      ),
+      installedUnit,
+    ],
+    { env },
+  );
+  assert.equal(
+    verifiedUnit.stdout.trim(),
+    "SYSTEMD_UNIT_CONTRACT=PASS",
+  );
+
   const version = await run(
     path.join(binDir, "agentdock"),
     ["version"],
     { env },
   );
-  assert.equal(version.stdout.trim(), "0.2.0-dev.5");
+  assert.equal(version.stdout.trim(), "0.2.0-dev.6");
 
   const doctor = await run(
     path.join(binDir, "agentdock"),

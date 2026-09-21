@@ -366,6 +366,13 @@ agentdock doctor --json
 
 Doctor checks Node, Git/worktrees, the effective configuration, state-directory writability, transport, policy, OS user and optional passwordless sudo without printing credential values.
 
+For native HTTP service health and readiness:
+
+```bash
+agentdock health
+agentdock health --wait-ms 10000
+```
+
 Managed installs support explicit lifecycle commands:
 
 ```bash
@@ -381,7 +388,7 @@ Build a reproducible release archive from a clean Git checkout with:
 npm run release:build
 ```
 
-See [docs/configuration.md](docs/configuration.md), [docs/doctor.md](docs/doctor.md), [docs/lifecycle.md](docs/lifecycle.md), and [docs/deployment.md](docs/deployment.md).
+See [docs/configuration.md](docs/configuration.md), [docs/doctor.md](docs/doctor.md), [docs/lifecycle.md](docs/lifecycle.md), [docs/service-lifecycle.md](docs/service-lifecycle.md), and [docs/deployment.md](docs/deployment.md).
 
 ## Development
 
@@ -419,7 +426,7 @@ v0.2 focuses on production distribution and protocol modernization rather than f
 - ✅ stable versioned configuration schema with env overrides;
 - ✅ `agentdock doctor` diagnostics;
 - ✅ managed install / upgrade / uninstall lifecycle;
-- service health and restart hardening;
+- ✅ service health and restart hardening;
 - release CI, versioning and reproducible packages;
 - documentation for remote ChatGPT deployment.
 

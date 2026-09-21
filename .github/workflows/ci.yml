@@ -40,6 +40,9 @@ jobs:
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high
 
+      - name: Verify systemd service contract
+        run: npm run service:verify
+
       - name: Build reproducible release artifact
         run: npm run release:build
 

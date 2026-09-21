@@ -8,6 +8,8 @@ The project follows Semantic Versioning.
 
 ### Added
 
+- Hardened service lifecycle with graceful owned-Process shutdown, health probing/retry, systemd `Restart=always` + `KillMode=control-group` contract, and restart/crash recovery tests.
+- `agentdock health` CLI for local/explicit HTTP health checks and startup readiness gates.
 - Managed install/upgrade/uninstall lifecycle with version manifests, downgrade protection, state-preserving uninstall defaults, and explicit destructive cleanup options.
 - Reproducible versioned release tarballs with SHA-256 checksum generation.
 - `agentdock doctor` CLI with human-readable and JSON diagnostics for runtime, Git/worktree support, configuration, state persistence, transport, policy, OS user and optional sudo.

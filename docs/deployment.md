@@ -49,7 +49,7 @@ mode:   stateless Streamable HTTP
 
 The HTTP transport supports both legacy MCP clients and the MCP 2026-07-28 modern protocol era.
 
-Environment overrides currently available before the v0.2 configuration-schema work lands:
+HTTP settings belong in the v0.2 configuration schema. Environment variables remain supported as higher-precedence deployment overrides:
 
 ```bash
 AGENTDOCK_HTTP_HOST=127.0.0.1
@@ -59,9 +59,52 @@ AGENTDOCK_HTTP_ALLOWED_HOSTS=localhost,127.0.0.1
 AGENTDOCK_HTTP_ALLOWED_ORIGINS=localhost,127.0.0.1
 ```
 
+See [configuration.md](configuration.md) for the canonical schema and precedence rules.
+
 A non-loopback bind fails closed unless `AGENTDOCK_HTTP_ALLOWED_HOSTS` is explicitly set. Requests with a present Origin header are checked against the Origin allowlist; normal non-browser MCP clients that omit Origin remain supported.
 
 The native HTTP endpoint does **not** add authentication. For remote use, keep AgentDock on loopback and put an authenticated TLS reverse proxy / MCP gateway in front of it.
+
+Health check:
+
+```bash
+agentdock health
+```
+
+Wait for startup/recovery:
+
+```bash
+agentdock health --wait-ms 10000 --timeout-ms 1000
+```
+
+## systemd user service
+
+A hardened user unit is shipped at:
+
+```text
+deploy/systemd/agentdock-http.service
+```
+
+For the default managed install:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ~/.local/share/agentdock-mcp-harness/deploy/systemd/agentdock-http.service \
+  ~/.config/systemd/user/agentdock-http.service
+
+systemctl --user daemon-reload
+systemctl --user enable --now agentdock-http.service
+```
+
+The unit contract is validated by:
+
+```bash
+npm run service:verify
+```
+
+Its critical semantics are `Restart=always`, `KillMode=control-group`, graceful SIGTERM, SIGKILL fallback, and an `agentdock health --wait-ms 10000` startup gate.
+
+See [service-lifecycle.md](service-lifecycle.md) for planned restart vs crash semantics and Process ownership behavior.
 
 ## State
 

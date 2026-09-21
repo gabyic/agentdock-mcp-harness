@@ -1,0 +1,26 @@
+[Unit]
+Description=AgentDock MCP native Streamable HTTP
+Documentation=https://github.com/gabyic/agentdock-mcp-harness
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+Environment=AGENTDOCK_TRANSPORT=http
+EnvironmentFile=-%h/.config/agentdock/service.env
+ExecStart=%h/.local/bin/agentdock-mcp
+ExecStartPost=%h/.local/bin/agentdock health --wait-ms 10000 --timeout-ms 1000
+Restart=always
+RestartSec=2
+KillMode=control-group
+KillSignal=SIGTERM
+SendSIGKILL=yes
+FinalKillSignal=SIGKILL
+TimeoutStartSec=20
+TimeoutStopSec=15
+UMask=0077
+
+[Install]
+WantedBy=default.target

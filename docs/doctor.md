@@ -139,7 +139,7 @@ Use normal secret-management practices anyway; Doctor redaction is not a replace
 ## Example
 
 ```text
-AgentDock Doctor 0.2.0-dev.5
+AgentDock Doctor 0.2.0-dev.6
 Overall: WARN
 
 [PASS] node — Node.js v24.16.0

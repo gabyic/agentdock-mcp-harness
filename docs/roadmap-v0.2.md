@@ -92,18 +92,20 @@ Completed in v0.2-05:
 
 The installation path does not configure or expose network services.
 
-### 6. Service lifecycle hardening
+### 6. Service lifecycle hardening — DONE
 
-The live v0.1 acceptance exposed a real operational issue: a clean SIGTERM with `Restart=on-failure` did not restart the remote connector.
+Completed in v0.2-06:
 
-v0.2 should define and test deployment expectations for:
+- planned SIGTERM/SIGINT stops HTTP acceptance, terminates owned Task Processes, closes transports, and exits cleanly;
+- planned service shutdown records owned Processes as `CANCELLED` with audit reason `service_shutdown`;
+- unexpected loss of ownership continues to restore persisted RUNNING/CANCELLING Processes as `INTERRUPTED`;
+- added `agentdock health` with JSON output, explicit URL override, per-request timeout, and startup/recovery retry windows;
+- added a hardened systemd user unit with `Restart=always`, `KillMode=control-group`, SIGTERM graceful stop, SIGKILL fallback, and health-gated startup;
+- added a deterministic systemd unit contract validator;
+- black-box service tests cover planned restart, hard crash recovery, health down/up, MCP reconnect, Process ownership semantics, and delayed health readiness;
+- managed installs carry the systemd unit and validator when present in the source/release.
 
-- deliberate restart;
-- unexpected crash;
-- graceful shutdown;
-- process ownership;
-- service health checks;
-- connector recovery.
+This closes the clean-SIGTERM restart failure discovered during the v0.1 live acceptance.
 
 ## P0 — Open-source release engineering
 

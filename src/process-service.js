@@ -129,6 +129,99 @@ export class ProcessService {
     return results;
   }
 
+  #signalOwned(record, signal) {
+    try {
+      if (record.pid) {
+        process.kill(-record.pid, signal);
+      } else {
+        record.child?.kill(signal);
+      }
+      return true;
+    } catch (error) {
+      if (error?.code === "ESRCH") {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async #waitForTerminal(record, timeoutMs) {
+    const terminal = () =>
+      !record.child ||
+      !["RUNNING", "CANCELLING"].includes(record.status);
+
+    if (terminal()) return true;
+
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      if (terminal()) return true;
+    }
+    return terminal();
+  }
+
+  async shutdownOwned({ graceMs = 5000, killWaitMs = 1000 } = {}) {
+    if (!Number.isInteger(graceMs) || graceMs < 0) {
+      throw new TypeError("graceMs must be a non-negative integer.");
+    }
+    if (!Number.isInteger(killWaitMs) || killWaitMs < 0) {
+      throw new TypeError("killWaitMs must be a non-negative integer.");
+    }
+
+    const owned = [...this.#processes.values()].filter(
+      (record) =>
+        record.child &&
+        (record.status === "RUNNING" ||
+          record.status === "CANCELLING"),
+    );
+
+    for (const record of owned) {
+      if (record.status === "RUNNING") {
+        record.cancel_requested = true;
+        record.status = "CANCELLING";
+        this.#store.saveProcess(record);
+        this.#audit?.append(record.task_id, {
+          event: "PROCESS_CANCEL_REQUESTED",
+          process_id: record.process_id,
+          pid: record.pid,
+          status: record.status,
+          cwd: record.cwd,
+          requested_at: new Date().toISOString(),
+          reason: "service_shutdown",
+        });
+      }
+      this.#signalOwned(record, "SIGTERM");
+    }
+
+    await Promise.all(
+      owned.map((record) =>
+        this.#waitForTerminal(record, graceMs),
+      ),
+    );
+
+    const stubborn = owned.filter(
+      (record) =>
+        record.child &&
+        (record.status === "RUNNING" ||
+          record.status === "CANCELLING"),
+    );
+    for (const record of stubborn) {
+      this.#signalOwned(record, "SIGKILL");
+    }
+
+    await Promise.all(
+      stubborn.map((record) =>
+        this.#waitForTerminal(record, killWaitMs),
+      ),
+    );
+
+    return {
+      requested: owned.length,
+      forced: stubborn.length,
+      processes: owned.map((record) => this.#public(record)),
+    };
+  }
+
   async start({
     taskId,
     argv,
@@ -377,17 +470,7 @@ export class ProcessService {
       requested_at: new Date().toISOString(),
     });
 
-    try {
-      if (record.pid) {
-        process.kill(-record.pid, "SIGTERM");
-      } else {
-        record.child?.kill("SIGTERM");
-      }
-    } catch (error) {
-      if (error?.code !== "ESRCH") {
-        throw error;
-      }
-    }
+    this.#signalOwned(record, "SIGTERM");
 
     return this.#public(record);
   }

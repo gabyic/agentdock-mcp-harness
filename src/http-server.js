@@ -73,6 +73,8 @@ export function createAgentDockHttpServer({
 
   const validateHost = hostHeaderValidation(hostnames);
   const validateOrigin = originValidation(origins);
+  let draining = false;
+  let stopAcceptingPromise = null;
 
   const mcpHandler = createMcpHandler(
     () => createAgentDockServer({ runtime: sharedRuntime }).server,
@@ -90,6 +92,14 @@ export function createAgentDockHttpServer({
   });
 
   const httpServer = createServer(async (req, res) => {
+    if (draining) {
+      writeJson(res, 503, {
+        status: "draining",
+        transport: "streamable-http",
+      });
+      return;
+    }
+
     if (!validateHost(req, res) || !validateOrigin(req, res)) {
       return;
     }
@@ -144,15 +154,24 @@ export function createAgentDockHttpServer({
     }
   });
 
-  async function close() {
-    await new Promise((resolve, reject) => {
+  function beginShutdown() {
+    draining = true;
+    if (stopAcceptingPromise) {
+      return stopAcceptingPromise;
+    }
+
+    stopAcceptingPromise = new Promise((resolve, reject) => {
       if (!httpServer.listening) {
         resolve();
         return;
       }
       httpServer.close((error) => (error ? reject(error) : resolve()));
     });
+    return stopAcceptingPromise;
+  }
 
+  async function close() {
+    await beginShutdown();
     await mcpHandler.close();
   }
 
@@ -163,6 +182,7 @@ export function createAgentDockHttpServer({
     healthPath: normalizedHealthPath,
     allowedHosts: hostnames,
     allowedOrigins: origins,
+    beginShutdown,
     close,
   };
 }

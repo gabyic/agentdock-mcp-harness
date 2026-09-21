@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import { runDoctor, formatDoctorReport } from "./doctor-service.js";
 import {
+  runHealthCheck,
+  formatHealthReport,
+} from "./health-service.js";
+import {
   runUpgradeCommand,
   runUninstallCommand,
 } from "./lifecycle-service.js";
@@ -10,12 +14,14 @@ function usage() {
   return [
     "Usage:",
     "  agentdock doctor [--json] [--config PATH]",
+    "  agentdock health [--json] [--url URL] [--wait-ms N] [--timeout-ms N] [--config PATH]",
     "  agentdock upgrade --source PATH [--skip-tests] [--allow-downgrade] [--force]",
     "  agentdock uninstall [--remove-state] [--state-dir PATH] [--remove-config] [--config PATH]",
     "  agentdock version",
     "",
     "Commands:",
     "  doctor       Diagnose the current AgentDock runtime and configuration.",
+    "  health       Check an AgentDock HTTP health endpoint.",
     "  upgrade      Upgrade a managed install from a local checkout/release.",
     "  uninstall    Remove a managed install; state/config are preserved by default.",
     "  version      Print the AgentDock version.",
@@ -33,6 +39,21 @@ function doctorUsage() {
     "  --json          Emit machine-readable JSON.",
     "  --config PATH   Diagnose using an explicit AgentDock config file.",
     "  -h, --help      Show this help.",
+    "",
+  ].join("\n");
+}
+
+function healthUsage() {
+  return [
+    "Usage: agentdock health [options]",
+    "",
+    "Options:",
+    "  --json             Emit machine-readable JSON.",
+    "  --url URL          Explicit HTTP(S) health endpoint.",
+    "  --wait-ms N        Retry until healthy for up to N milliseconds.",
+    "  --timeout-ms N     Timeout for each request (default 1000).",
+    "  --config PATH      Use an explicit AgentDock config file.",
+    "  -h, --help         Show this help.",
     "",
   ].join("\n");
 }
@@ -74,6 +95,20 @@ function usageError(message, commandUsage = usage()) {
   process.exit(2);
 }
 
+function integerOption(value, name, { min = 0 } = {}) {
+  if (!/^\d+$/.test(value ?? "")) {
+    usageError(name + " must be an integer.", healthUsage());
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < min) {
+    usageError(
+      name + " must be an integer >= " + min + ".",
+      healthUsage(),
+    );
+  }
+  return parsed;
+}
+
 async function runDoctorCli(args) {
   let json = false;
   let configPath;
@@ -104,6 +139,85 @@ async function runDoctorCli(args) {
     process.stdout.write(formatDoctorReport(report));
   }
   return report.overall_status === "FAIL" ? 1 : 0;
+}
+
+async function runHealthCli(args) {
+  let json = false;
+  let url;
+  let configPath;
+  let waitMs = 0;
+  let timeoutMs = 1000;
+
+  while (args.length > 0) {
+    const arg = args.shift();
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
+    if (arg === "--url") {
+      const value = args.shift();
+      if (!value) usageError("--url requires a URL.", healthUsage());
+      url = value;
+      continue;
+    }
+    if (arg === "--wait-ms") {
+      const value = args.shift();
+      if (!value) usageError("--wait-ms requires an integer.", healthUsage());
+      waitMs = integerOption(value, "--wait-ms");
+      continue;
+    }
+    if (arg === "--timeout-ms") {
+      const value = args.shift();
+      if (!value) {
+        usageError("--timeout-ms requires an integer.", healthUsage());
+      }
+      timeoutMs = integerOption(value, "--timeout-ms", { min: 1 });
+      continue;
+    }
+    if (arg === "--config") {
+      const value = args.shift();
+      if (!value) usageError("--config requires a path.", healthUsage());
+      configPath = value;
+      continue;
+    }
+    if (arg === "-h" || arg === "--help") {
+      process.stdout.write(healthUsage());
+      return 0;
+    }
+    usageError("Unknown health option: " + arg, healthUsage());
+  }
+
+  try {
+    const result = await runHealthCheck({
+      url,
+      waitMs,
+      timeoutMs,
+      configPath,
+    });
+    if (json) {
+      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    } else {
+      process.stdout.write(formatHealthReport(result));
+    }
+    return result.status === "PASS" ? 0 : 1;
+  } catch (error) {
+    if (json) {
+      process.stdout.write(
+        JSON.stringify(
+          {
+            status: "FAIL",
+            healthy: false,
+            error: error?.message ?? String(error),
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+    } else {
+      process.stderr.write((error?.message ?? String(error)) + "\n");
+    }
+    return 1;
+  }
 }
 
 function runUpgradeCli(args) {
@@ -179,6 +293,9 @@ let exitCode;
 switch (command) {
   case "doctor":
     exitCode = await runDoctorCli(args);
+    break;
+  case "health":
+    exitCode = await runHealthCli(args);
     break;
   case "upgrade":
     exitCode = runUpgradeCli(args);
