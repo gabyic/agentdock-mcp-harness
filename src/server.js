@@ -11,6 +11,7 @@ import { PolicyService } from "./policy-service.js";
 import { ProcessService } from "./process-service.js";
 import { StateStore } from "./state-store.js";
 import { TaskService } from "./task-service.js";
+import { AGENTDOCK_VERSION } from "./version.js";
 
 function toolResult(data) {
   return {
@@ -145,7 +146,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
   } = services;
 
   const server = new McpServer(
-    { name: "AgentDock", version: "0.2.0-dev.3" },
+    { name: "AgentDock", version: AGENTDOCK_VERSION },
     { capabilities: { tools: {} } },
   );
 

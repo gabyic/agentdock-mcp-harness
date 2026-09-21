@@ -8,6 +8,7 @@ The project follows Semantic Versioning.
 
 ### Added
 
+- `agentdock doctor` CLI with human-readable and JSON diagnostics for runtime, Git/worktree support, configuration, state persistence, transport, policy, OS user and optional sudo.
 - Versioned JSON configuration schema v1 with `~/.config/agentdock/config.json` discovery and `AGENTDOCK_CONFIG` override.
 - Configurable persisted process-output bounds and bounded per-Task audit retention with truncation metadata.
 - Native stateless Streamable HTTP transport for MCP on `/mcp`, while retaining stdio.

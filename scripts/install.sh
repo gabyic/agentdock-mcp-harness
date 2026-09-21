@@ -119,21 +119,31 @@ fi
 mv "${staging}" "${INSTALL_DIR}"
 rm -rf "${backup}"
 
-launcher="${BIN_DIR}/agentdock-mcp"
-{
-  echo '#!/usr/bin/env bash'
-  echo 'set -Eeuo pipefail'
-  if [[ "${STATE_DIR_EXPLICIT}" -eq 1 ]]; then
-    printf 'export AGENTDOCK_STATE_DIR="${AGENTDOCK_STATE_DIR:-%s}"\n' "${STATE_DIR}"
-  fi
-  printf 'exec node "%s/src/index.js" "$@"\n' "${INSTALL_DIR}"
-} > "${launcher}"
-chmod 755 "${launcher}"
+write_launcher() {
+  local target="$1"
+  local entrypoint="$2"
+
+  {
+    echo '#!/usr/bin/env bash'
+    echo 'set -Eeuo pipefail'
+    if [[ "${STATE_DIR_EXPLICIT}" -eq 1 ]]; then
+      printf 'export AGENTDOCK_STATE_DIR="${AGENTDOCK_STATE_DIR:-%s}"\n' "${STATE_DIR}"
+    fi
+    printf 'exec node "%s/%s" "$@"\n' "${INSTALL_DIR}" "${entrypoint}"
+  } > "${target}"
+  chmod 755 "${target}"
+}
+
+mcp_launcher="${BIN_DIR}/agentdock-mcp"
+cli_launcher="${BIN_DIR}/agentdock"
+write_launcher "${mcp_launcher}" "src/index.js"
+write_launcher "${cli_launcher}" "src/cli.js"
 
 echo
 echo "Installed ${PROJECT_NAME}."
-echo "Launcher: ${launcher}"
-echo "State:    ${STATE_DIR}"
+echo "MCP launcher: ${mcp_launcher}"
+echo "CLI launcher: ${cli_launcher}"
+echo "State:        ${STATE_DIR}"
 
 case ":${PATH}:" in
   *":${BIN_DIR}:"*) ;;
@@ -145,7 +155,8 @@ case ":${PATH}:" in
 esac
 
 echo
-echo "Smoke test:"
-echo "  ${launcher}"
+echo "Smoke tests:"
+echo "  ${mcp_launcher}"
+echo "  ${cli_launcher} doctor"
 echo
 echo "For MCP client and remote deployment examples, see docs/deployment.md."

@@ -58,20 +58,21 @@ Completed in v0.2-03:
 - rejected unknown fields, invalid regex/types/ports/paths, and unsafe non-loopback HTTP configuration;
 - documented the schema and environment mapping in `docs/configuration.md`.
 
-### 4. `agentdock doctor`
+### 4. `agentdock doctor` — DONE
 
-Add a deterministic diagnostics command that reports:
+Completed in v0.2-04:
 
-- Node version;
-- Git version;
-- writable state directory;
-- Git worktree capability;
-- MCP transport configuration;
-- policy parse status;
-- OS user;
-- optional sudo capability without making sudo a hard requirement.
-
-It must not print credentials.
+- added installed `agentdock` CLI with `doctor`, `--json`, and `--config PATH`;
+- reports Node.js and Git availability/version;
+- performs a real disposable Git detached-worktree create/list/remove probe;
+- verifies the configured state directory with a write/fsync/delete probe;
+- reports stdio or HTTP transport configuration;
+- validates policy through the canonical v0.2 config loader;
+- reports the effective OS user/uid/gid;
+- probes passwordless sudo with `sudo -n true` while treating sudo as optional;
+- distinguishes PASS / WARN / FAIL and uses exit 1 only for FAIL;
+- avoids printing policy bodies, environment values, tokens, passwords or API credentials;
+- added machine-readable JSON output and dedicated black-box CLI coverage.
 
 ### 5. Install / upgrade / uninstall lifecycle
 

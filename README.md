@@ -352,7 +352,21 @@ The installer performs a user-local installation by default and does not require
 
 AgentDock v0.2 development builds use a versioned JSON configuration schema at `~/.config/agentdock/config.json`. Existing `AGENTDOCK_*` environment variables remain supported as higher-precedence deployment overrides.
 
-See [docs/configuration.md](docs/configuration.md) for the config schema and [docs/deployment.md](docs/deployment.md) for local MCP / remote deployment guidance.
+After installation, verify the environment with:
+
+```bash
+agentdock doctor
+```
+
+For CI or automation:
+
+```bash
+agentdock doctor --json
+```
+
+Doctor checks Node, Git/worktrees, the effective configuration, state-directory writability, transport, policy, OS user and optional passwordless sudo without printing credential values.
+
+See [docs/configuration.md](docs/configuration.md), [docs/doctor.md](docs/doctor.md), and [docs/deployment.md](docs/deployment.md).
 
 ## Development
 
@@ -388,7 +402,7 @@ v0.2 focuses on production distribution and protocol modernization rather than f
 - ✅ MCP 2026-07-28 / TypeScript SDK v2 migration;
 - ✅ native stateless Streamable HTTP while retaining stdio;
 - ✅ stable versioned configuration schema with env overrides;
-- `agentdock doctor` diagnostics;
+- ✅ `agentdock doctor` diagnostics;
 - installation / upgrade / uninstall lifecycle;
 - service health and restart hardening;
 - release CI, versioning and reproducible packages;

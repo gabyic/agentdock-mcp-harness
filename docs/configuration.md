@@ -266,3 +266,11 @@ Examples:
 - non-loopback HTTP bind without an explicit host allowlist.
 
 Configuration errors never silently fall back to guessed values.
+
+Validate the effective configuration and surrounding runtime with:
+
+```bash
+agentdock doctor
+```
+
+Use `agentdock doctor --json` for machine-readable diagnostics. See [doctor.md](doctor.md).
