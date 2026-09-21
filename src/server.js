@@ -1,5 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { AgentDockError } from "./errors.js";
+import { FileEditService } from "./file-edit-service.js";
+import { FileQueryService } from "./file-query-service.js";
 import { GitService } from "./git-service.js";
 import { TaskService } from "./task-service.js";
 
@@ -10,9 +13,45 @@ function toolResult(data) {
   };
 }
 
+function toolError(error) {
+  const payload =
+    error instanceof AgentDockError
+      ? {
+          error: {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+          },
+        }
+      : {
+          error: {
+            code: "INTERNAL_ERROR",
+            message: error?.message ?? String(error),
+          },
+        };
+
+  return {
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+    structuredContent: payload,
+  };
+}
+
+function safe(handler) {
+  return async (input) => {
+    try {
+      return await handler(input);
+    } catch (error) {
+      return toolError(error);
+    }
+  };
+}
+
 export function createAgentDockServer({ stateDir } = {}) {
   const gitService = new GitService();
   const taskService = new TaskService({ gitService, stateDir });
+  const fileQueryService = new FileQueryService({ taskService });
+  const fileEditService = new FileEditService({ taskService });
 
   const server = new McpServer(
     { name: "AgentDock", version: "0.1.0" },
@@ -24,17 +63,119 @@ export function createAgentDockServer({ stateDir } = {}) {
     "Inspect a local Git repository without modifying its working tree.",
     { path: z.string().min(1).describe("Path inside the Git repository") },
     { readOnlyHint: true },
-    async ({ path }) => toolResult(await gitService.inspect(path)),
+    safe(async ({ path }) => toolResult(await gitService.inspect(path))),
   );
 
   server.tool(
     "task.create",
-    "Create an ACTIVE coding task in a clean detached Git worktree based on the source repository HEAD.",
+    "Create an ACTIVE coding task in a clean detached Git worktree based on source HEAD.",
     {
       repo_path: z.string().min(1).describe("Path inside the source Git repository"),
     },
-    async ({ repo_path }) =>
-      toolResult(await taskService.create({ repoPath: repo_path })),
+    safe(async ({ repo_path }) =>
+      toolResult(await taskService.create({ repoPath: repo_path }))),
+  );
+
+  server.tool(
+    "file.read",
+    "Read a UTF-8 file from the Task worktree and return a content hash.",
+    {
+      task_id: z.string().min(1),
+      path: z.string().min(1),
+    },
+    { readOnlyHint: true },
+    safe(async ({ task_id, path }) =>
+      toolResult(
+        await fileQueryService.read({
+          taskId: task_id,
+          filePath: path,
+        }),
+      )),
+  );
+
+  server.tool(
+    "file.search",
+    "Search Task worktree files using deterministic text matching and a glob.",
+    {
+      task_id: z.string().min(1),
+      query: z.string().min(1),
+      path: z.string().optional(),
+      glob: z.string().optional(),
+      max_results: z.number().int().min(1).max(1000).optional(),
+    },
+    { readOnlyHint: true },
+    safe(async ({ task_id, query, path, glob, max_results }) =>
+      toolResult(
+        await fileQueryService.search({
+          taskId: task_id,
+          query,
+          searchPath: path,
+          glob,
+          maxResults: max_results,
+        }),
+      )),
+  );
+
+  server.tool(
+    "file.patch",
+    "Patch an existing Task file only if its previously-read SHA-256 still matches.",
+    {
+      task_id: z.string().min(1),
+      path: z.string().min(1),
+      expected_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+      old_text: z.string().min(1),
+      new_text: z.string(),
+    },
+    safe(async ({
+      task_id,
+      path,
+      expected_sha256,
+      old_text,
+      new_text,
+    }) =>
+      toolResult(
+        await fileEditService.patch({
+          taskId: task_id,
+          filePath: path,
+          expectedSha256: expected_sha256,
+          oldText: old_text,
+          newText: new_text,
+        }),
+      )),
+  );
+
+  server.tool(
+    "file.write",
+    "Create a new UTF-8 Task file or explicitly replace an existing file.",
+    {
+      task_id: z.string().min(1),
+      path: z.string().min(1),
+      content: z.string(),
+      overwrite: z.boolean().optional(),
+    },
+    safe(async ({ task_id, path, content, overwrite }) =>
+      toolResult(
+        await fileEditService.write({
+          taskId: task_id,
+          filePath: path,
+          content,
+          overwrite,
+        }),
+      )),
+  );
+
+  server.tool(
+    "git.diff",
+    "Return structured Task worktree changes and unified diff, including untracked files.",
+    { task_id: z.string().min(1) },
+    { readOnlyHint: true },
+    safe(async ({ task_id }) => {
+      const task = taskService.get(task_id);
+      return toolResult({
+        task_id,
+        ...(await gitService.diff(task.worktree_path)),
+      });
+    }),
   );
 
   return { server };

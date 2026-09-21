@@ -1,4 +1,5 @@
 # 02 — Reliable code read/search/edit inside Task worktree
+Status: IMPLEMENTED
 
 Blocked by: 01
 

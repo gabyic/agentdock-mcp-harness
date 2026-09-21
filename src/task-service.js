@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { AgentDockError } from "./errors.js";
 
 export class TaskService {
   #git;
@@ -16,9 +17,17 @@ export class TaskService {
       path.join(os.homedir(), ".local", "state", "agentdock");
   }
 
+  get(taskId) {
+    const task = this.#tasks.get(taskId);
+    if (!task) {
+      throw new AgentDockError("TASK_NOT_FOUND", "Task not found: " + taskId);
+    }
+    return task;
+  }
+
   async create({ repoPath }) {
     const source = await this.#git.inspect(repoPath);
-    const taskId = `task_${randomUUID()}`;
+    const taskId = "task_" + randomUUID();
     const worktreesDir = path.join(this.#stateDir, "worktrees");
     const worktreePath = path.join(worktreesDir, taskId);
 

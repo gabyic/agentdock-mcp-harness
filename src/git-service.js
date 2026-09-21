@@ -12,7 +12,7 @@ export class GitService {
         ["-C", cwd, ...args],
         {
           encoding: "utf8",
-          maxBuffer: 1024 * 1024,
+          maxBuffer: 4 * 1024 * 1024,
           env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
         },
       );
@@ -22,7 +22,31 @@ export class GitService {
         typeof error?.stderr === "string" && error.stderr.trim()
           ? error.stderr.trim()
           : error?.message ?? String(error);
-      throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${detail}`);
+      throw new Error("git " + args.join(" ") + " failed in " + cwd + ": " + detail);
+    }
+  }
+
+  async #gitDiffNoIndex(cwd, relativePath) {
+    try {
+      const { stdout } = await execFileAsync(
+        "git",
+        ["-C", cwd, "diff", "--no-index", "--", "/dev/null", relativePath],
+        {
+          encoding: "utf8",
+          maxBuffer: 4 * 1024 * 1024,
+          env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        },
+      );
+      return stdout.trimEnd();
+    } catch (error) {
+      if (error?.code === 1 && typeof error?.stdout === "string") {
+        return error.stdout.trimEnd();
+      }
+      const detail =
+        typeof error?.stderr === "string" && error.stderr.trim()
+          ? error.stderr.trim()
+          : error?.message ?? String(error);
+      throw new Error("git diff --no-index failed for " + relativePath + ": " + detail);
     }
   }
 
@@ -62,16 +86,48 @@ export class GitService {
 
     if (worktreeHead !== baseHead) {
       throw new Error(
-        `Worktree HEAD mismatch: expected ${baseHead}, got ${worktreeHead}`,
+        "Worktree HEAD mismatch: expected " + baseHead + ", got " + worktreeHead,
       );
     }
 
     if (worktreeStatus.length > 0) {
       throw new Error(
-        `New worktree is not clean: ${worktreeStatus.replaceAll("\n", " | ")}`,
+        "New worktree is not clean: " + worktreeStatus.replaceAll("\n", " | "),
       );
     }
 
     return { head: worktreeHead, clean: true };
+  }
+
+  async diff(worktreePath) {
+    const porcelain = await this.#git(worktreePath, [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    ]);
+    const statusLines = porcelain ? porcelain.split("\n") : [];
+    const changedFiles = statusLines.map((line) => ({
+      status: line.slice(0, 2),
+      path: line.slice(3),
+    }));
+    const trackedPatch = await this.#git(worktreePath, [
+      "diff",
+      "--no-ext-diff",
+      "--binary",
+      "HEAD",
+      "--",
+      ".",
+    ]);
+
+    const untracked = changedFiles.filter((entry) => entry.status === "??");
+    const untrackedPatches = [];
+    for (const entry of untracked) {
+      untrackedPatches.push(await this.#gitDiffNoIndex(worktreePath, entry.path));
+    }
+
+    return {
+      changed_files: changedFiles,
+      patch: [trackedPatch, ...untrackedPatches].filter(Boolean).join("\n"),
+    };
   }
 }
