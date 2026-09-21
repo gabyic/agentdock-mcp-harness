@@ -1,0 +1,47 @@
+# Changelog
+
+All notable changes to AgentDock MCP Harness will be documented here.
+
+The project follows Semantic Versioning.
+
+## [0.1.0] - 2026-09-21
+
+### Added
+
+- Git-native durable Task lifecycle.
+- Isolated worktree creation from source repository HEAD.
+- Deterministic file read/search/patch/write primitives.
+- Asynchronous process lifecycle with incremental output cursors.
+- Durable Task/process state across MCP reconnects and AgentDock restarts.
+- Deterministic allow/ask/deny policy.
+- Smart Approval protocol with ALLOW_ONCE, ALLOW_TASK, DENY and ASK_USER.
+- Real local Git commits.
+- Explicit finish, cancel and cleanup semantics.
+- Host absolute-path access using native OS permissions.
+- Structured Task audit with best-effort secret redaction.
+- Bounded persisted process diagnostics.
+- Automated MCP black-box acceptance.
+- Live ChatGPT Web acceptance on a real Linux host.
+
+### Proven v0.1 acceptance
+
+The live acceptance demonstrated:
+
+- targeted test FAIL;
+- failure-driven second edit;
+- real MCP service interruption;
+- durable task.resume;
+- real Smart Approval round-trip;
+- targeted and full test PASS;
+- real Git commit;
+- task.finish;
+- audit evidence;
+- source repository zero pollution.
+
+### Known limitations
+
+- Linux only.
+- stdio Core transport only.
+- Public ingress/authentication are external deployment concerns.
+- No first-class push/merge/PR/deploy orchestration.
+- No server-side LLM or autonomous worker.

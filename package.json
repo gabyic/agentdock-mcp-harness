@@ -1,9 +1,26 @@
 {
-  "name": "agentdock",
+  "name": "agentdock-mcp-harness",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Deterministic MCP coding harness for ChatGPT Web",
+  "description": "Deterministic remote software-engineering harness exposed through MCP",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gabyic/agentdock-mcp-harness.git"
+  },
+  "homepage": "https://github.com/gabyic/agentdock-mcp-harness#readme",
+  "bugs": {
+    "url": "https://github.com/gabyic/agentdock-mcp-harness/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "coding-agent",
+    "software-engineering",
+    "git",
+    "chatgpt"
+  ],
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test",
