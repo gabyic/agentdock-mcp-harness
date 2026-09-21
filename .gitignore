@@ -1,0 +1,13 @@
+# AgentDock
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
+.agentdock/
