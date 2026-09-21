@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Deterministic remote software-engineering harness exposed through MCP",
+  "description": "Use your ChatGPT or Claude Web quota for remote coding without a second server-side API token meter",
   "license": "MIT",
   "repository": {
     "type": "git",

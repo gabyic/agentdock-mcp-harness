@@ -1,24 +1,184 @@
 # AgentDock MCP Harness
 
-> A deterministic remote software-engineering harness for ChatGPT and other MCP clients.
+> **Use your ChatGPT / Claude Web quota as a remote coding agent — no second API token meter.**
 
-AgentDock MCP Harness lets an MCP-capable reasoning agent work on a real Linux machine without requiring a second LLM on the server. The model reasons; AgentDock executes deterministic engineering primitives for Git, files, processes, approvals, durable task state, and audit.
+If your chat plan gives you high or near-unlimited usage, AgentDock lets that same chat-model quota drive real remote software engineering on your own Linux server.
+
+**No second coding model. No extra server-side AI API key. No separate per-token reasoning bill.**
+
+AgentDock keeps ChatGPT / Claude / another MCP-capable chat client as the **only reasoning agent** and adds the missing execution layer: Git worktrees, file editing, shell/process execution, tests, durable tasks, approvals, commits, host access, and audit.
+
+### Why the token model matters
+
+Long coding tasks are token-hungry. A real debugging loop may repeatedly:
+
+```text
+read code
+→ search more files
+→ reason
+→ edit
+→ run tests
+→ inspect failure
+→ reason again
+→ edit again
+→ run the full suite
+→ review diff
+```
+
+With an API-based coding agent, every reasoning loop consumes separately billed API tokens.
+
+With AgentDock, the reasoning stays inside the chat product you already use. If your ChatGPT / Claude plan provides a large or near-unlimited chat allowance, **that existing allowance becomes the reasoning budget for remote coding**, while the server only executes deterministic MCP tools.
+
+> AgentDock does not claim that every chat subscription is literally unlimited. Plans can have usage, rate, or context limits. The value proposition is that AgentDock adds **no second model/API token meter on the server**.
 
 **Status:** v0.1 Core is complete and has passed both automated MCP black-box acceptance and a live ChatGPT Web acceptance on a real Linux server.
 
 > Naming note: this project is not affiliated with other projects named AgentDock. The public repository uses **AgentDock MCP Harness** to distinguish this execution harness from unrelated agent frameworks and desktop tools.
 
-## Why
+## What problem does it solve?
 
-Most "coding agent" servers bundle another model, another API key, another orchestration layer, or an opaque terminal session. AgentDock takes a narrower approach:
+### 1. ChatGPT Web is smart, but it cannot normally work on your server
 
-- the MCP client is the reasoning agent;
-- the server performs deterministic execution only;
-- every write-capable coding task is isolated in a Git worktree;
-- task state survives MCP disconnects and AgentDock restarts;
-- approvals are deterministic policy gates, with the connected agent acting as reviewer;
-- host access follows native OS permissions;
-- audit records what happened without pretending arbitrary host side effects are transactionally reversible.
+Chat models can reason about code extremely well, but without an execution harness they cannot reliably:
+
+- inspect a real repository;
+- edit files safely;
+- run tests and builds;
+- manage long-running processes;
+- create isolated Git changes;
+- survive a dropped MCP connection;
+- commit the finished result.
+
+AgentDock turns MCP from a collection of remote commands into a durable software-engineering workflow.
+
+### 2. You should not need a second AI just to execute code
+
+Many "coding agent" architectures look like this:
+
+```text
+ChatGPT
+   |
+   v
+remote server
+   |
+   v
+another LLM / coding agent API
+   |
+   v
+shell / files / Git
+```
+
+That creates duplicated reasoning, duplicated context, another API key, and another token bill.
+
+AgentDock uses:
+
+```text
+ChatGPT / Claude / MCP client
+          |
+          | reasoning + decisions
+          v
+       AgentDock
+          |
+          | deterministic execution
+          v
+ Git / files / processes / Linux
+```
+
+**One reasoning agent. No server-side LLM required.**
+
+### 3. A raw SSH MCP is not a professional coding harness
+
+Giving a model `ssh` or `run_command` is useful, but it leaves the model responsible for inventing its own engineering workflow every time.
+
+AgentDock provides first-class primitives for:
+
+- Task lifecycle;
+- isolated Git worktrees;
+- file read/search/patch/write;
+- asynchronous processes;
+- incremental output;
+- test failure inspection;
+- Git diff and commit;
+- approval requests;
+- structured audit.
+
+The model reasons about the software problem instead of repeatedly rebuilding shell orchestration.
+
+### 4. Long coding tasks should survive disconnects
+
+Browser sessions, MCP connections, OAuth proxies, and remote services can restart.
+
+AgentDock persists Task and process metadata so the same `task_id` can resume after a reconnect or AgentDock restart. A process that was running before a restart is explicitly restored as `INTERRUPTED`, never falsely reported as still running.
+
+### 5. AI coding should not pollute your source checkout
+
+Every write-capable coding Task gets its own Git worktree based on the source repository's current `HEAD`.
+
+Your source checkout can even be dirty; AgentDock keeps those existing uncommitted changes out of the Task.
+
+The AI can test, edit, diff, and commit in isolation while the source working tree remains untouched.
+
+### 6. Powerful remote access needs approval and evidence
+
+AgentDock can intentionally access host files and run commands using the permissions of its OS user.
+
+Instead of pretending this is risk-free, AgentDock makes the boundary explicit:
+
+- deterministic `allow / ask / deny` policy;
+- structured ApprovalRequest;
+- `ALLOW_ONCE / ALLOW_TASK / DENY / ASK_USER`;
+- workspace-vs-host audit;
+- process exit codes and timestamps;
+- Git commit evidence;
+- best-effort secret redaction in persisted audit.
+
+## What do you get?
+
+With AgentDock connected, a chat model can carry out a workflow like:
+
+```text
+"Fix this bug on my server"
+        |
+        v
+inspect repo
+        |
+create isolated Task/worktree
+        |
+search + read code
+        |
+edit
+        |
+run real test -> FAIL
+        |
+read failure
+        |
+edit again
+        |
+test -> PASS
+        |
+full suite -> PASS
+        |
+review git diff
+        |
+create real commit
+        |
+finish Task
+        |
+return commit SHA + audit
+```
+
+All of that can happen while **the chat model remains the brain and AgentDock remains the execution harness**.
+
+## Who is this for?
+
+AgentDock is especially useful if you:
+
+- already use ChatGPT Web / Claude / another strong MCP-capable chat model;
+- want that chat model to work directly on a remote Linux development machine;
+- do not want to run or pay for a second server-side coding model;
+- want more structure than a generic SSH MCP;
+- care about Git isolation, resumability, approvals, and auditability;
+- want a coding-harness experience from the browser rather than another local coding-agent application.
 
 ## Architecture
 
