@@ -1,6 +1,6 @@
 # AgentDock v0.1 Live Product Acceptance
 
-Status: READY_FOR_CHATGPT_WEB
+Status: PASS
 Prepared: 2026-09-21
 
 ## Live MCP endpoint

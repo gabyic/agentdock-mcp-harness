@@ -1,5 +1,5 @@
 # 09 — Real ChatGPT Web + Leapscall product Acceptance
-Status: READY_FOR_CHATGPT_WEB
+Status: IMPLEMENTED
 
 Blocked by: 08
 
