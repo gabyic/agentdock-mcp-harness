@@ -1,5 +1,5 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { McpServer } from "@modelcontextprotocol/server";
+import * as z from "zod/v4";
 import { AgentDockError } from "./errors.js";
 import { ApprovalService } from "./approval-service.js";
 import { AuditService } from "./audit-service.js";
@@ -52,6 +52,29 @@ function safe(handler) {
   };
 }
 
+function registerTool(
+  server,
+  name,
+  description,
+  inputShape,
+  annotationsOrHandler,
+  maybeHandler,
+) {
+  const hasAnnotations = typeof annotationsOrHandler !== "function";
+  const handler = hasAnnotations ? maybeHandler : annotationsOrHandler;
+  const annotations = hasAnnotations ? annotationsOrHandler : undefined;
+
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object(inputShape),
+      ...(annotations ? { annotations } : {}),
+    },
+    handler,
+  );
+}
+
 export function createAgentDockServer({ stateDir } = {}) {
   const stateStore = new StateStore({ stateDir });
   const auditService = new AuditService({ stateStore });
@@ -79,11 +102,12 @@ export function createAgentDockServer({ stateDir } = {}) {
   });
 
   const server = new McpServer(
-    { name: "AgentDock", version: "0.1.0" },
+    { name: "AgentDock", version: "0.2.0-dev.1" },
     { capabilities: { tools: {} } },
   );
 
-  server.tool(
+  registerTool(
+    server,
     "repo.inspect",
     "Inspect a local Git repository without modifying its working tree.",
     { path: z.string().min(1).describe("Path inside the Git repository") },
@@ -91,7 +115,8 @@ export function createAgentDockServer({ stateDir } = {}) {
     safe(async ({ path }) => toolResult(await gitService.inspect(path))),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "task.create",
     "Create an ACTIVE coding task in a clean detached Git worktree based on source HEAD.",
     {
@@ -112,7 +137,8 @@ export function createAgentDockServer({ stateDir } = {}) {
     }),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "task.resume",
     "Resume a durable Task by task_id and return restored process metadata.",
     { task_id: z.string().min(1) },
@@ -133,7 +159,8 @@ export function createAgentDockServer({ stateDir } = {}) {
     }),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "task.finish",
     "Explicitly mark an ACTIVE Task COMPLETED after processes stop and the worktree is committed.",
     { task_id: z.string().min(1) },
@@ -170,7 +197,8 @@ export function createAgentDockServer({ stateDir } = {}) {
     }),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "task.cancel",
     "Cancel an ACTIVE Task, best-effort stopping its running processes while preserving the worktree.",
     { task_id: z.string().min(1) },
@@ -194,7 +222,8 @@ export function createAgentDockServer({ stateDir } = {}) {
     }),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "task.cleanup",
     "Remove the worktree of a COMPLETED or CANCELLED Task while preserving durable Task metadata.",
     { task_id: z.string().min(1) },
@@ -220,7 +249,8 @@ export function createAgentDockServer({ stateDir } = {}) {
     }),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "file.read",
     "Read a UTF-8 file. Relative paths use the Task worktree; absolute paths use the host OS.",
     {
@@ -237,7 +267,8 @@ export function createAgentDockServer({ stateDir } = {}) {
       )),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "file.search",
     "Search files using deterministic text matching and a glob. Relative paths use the Task worktree; absolute paths use the host OS.",
     {
@@ -260,7 +291,8 @@ export function createAgentDockServer({ stateDir } = {}) {
       )),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "file.patch",
     "Patch an existing file if its SHA-256 still matches. Relative paths use the Task worktree; absolute paths use the host OS.",
     {
@@ -288,7 +320,8 @@ export function createAgentDockServer({ stateDir } = {}) {
       )),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "file.write",
     "Create or replace a UTF-8 file. Relative paths use the Task worktree; absolute paths use the host OS.",
     {
@@ -308,7 +341,8 @@ export function createAgentDockServer({ stateDir } = {}) {
       )),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "git.diff",
     "Return structured Task worktree changes and unified diff, including untracked files.",
     { task_id: z.string().min(1) },
@@ -323,7 +357,8 @@ export function createAgentDockServer({ stateDir } = {}) {
   );
 
 
-  server.tool(
+  registerTool(
+    server,
     "git.commit",
     "Stage all Task worktree changes and create a real local Git commit without push, merge, or deploy.",
     {
@@ -352,7 +387,8 @@ export function createAgentDockServer({ stateDir } = {}) {
   );
 
 
-  server.tool(
+  registerTool(
+    server,
     "audit.get",
     "Return structured persisted Task audit entries after a sequence cursor.",
     {
@@ -372,7 +408,8 @@ export function createAgentDockServer({ stateDir } = {}) {
     }),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "approval.get",
     "Return a durable approval request by Task and approval_id.",
     {
@@ -389,7 +426,8 @@ export function createAgentDockServer({ stateDir } = {}) {
       )),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "approval.respond",
     "Resolve or escalate a durable approval request.",
     {
@@ -412,7 +450,8 @@ export function createAgentDockServer({ stateDir } = {}) {
       )),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "process.start",
     "Start an asynchronous Task process using explicit argv or shell mode.",
     {
@@ -434,7 +473,8 @@ export function createAgentDockServer({ stateDir } = {}) {
       )),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "process.status",
     "Return current status and execution metadata for a Task process.",
     {
@@ -448,7 +488,8 @@ export function createAgentDockServer({ stateDir } = {}) {
       )),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "process.output",
     "Read process stdout/stderr incrementally from a pull cursor.",
     {
@@ -467,7 +508,8 @@ export function createAgentDockServer({ stateDir } = {}) {
       )),
   );
 
-  server.tool(
+  registerTool(
+    server,
     "process.cancel",
     "Best-effort cancel a running Task process and its Linux process group.",
     {

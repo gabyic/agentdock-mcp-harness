@@ -4,6 +4,16 @@ All notable changes to AgentDock MCP Harness will be documented here.
 
 The project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Changed
+
+- Migrated Core from the monolithic `@modelcontextprotocol/sdk` v1 package to the stable split MCP TypeScript SDK v2 packages.
+- Replaced deprecated `server.tool()` registration with v2 `registerTool()` and explicit Zod v4 Standard Schema objects.
+- Replaced hand-wired stdio serving with `serveStdio(factory)`, enabling MCP 2026-07-28 modern-era connections while preserving 2025-era compatibility.
+- Moved the MCP client SDK used by black-box tests to a development-only dependency.
+- Pinned the full v0.1 acceptance scenario to MCP 2026-07-28 and added dual-era tool-surface regression coverage.
+
 ## [0.1.0] - 2026-09-21
 
 ### Added

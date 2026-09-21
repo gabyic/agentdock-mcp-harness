@@ -10,21 +10,18 @@ The goal is not to turn AgentDock into another autonomous agent framework. The c
 
 ## P0 — Protocol and transport modernization
 
-### 1. Migrate to MCP 2026-07-28 / TypeScript SDK v2
+### 1. Migrate to MCP 2026-07-28 / TypeScript SDK v2 — DONE
 
-The current v0.1 implementation uses the v1 monolithic `@modelcontextprotocol/sdk` package.
+Completed in v0.2-01:
 
-v0.2 will migrate to the stable split SDK:
-
-- `@modelcontextprotocol/server`
-- Zod v4 schemas
-- the MCP 2026-07-28 protocol model
-
-Acceptance:
-
-- the full v0.1 black-box suite remains green;
-- tool contracts remain compatible unless a migration note explicitly documents a change;
-- no server-side LLM dependency is introduced.
+- runtime migrated from `@modelcontextprotocol/sdk` v1 to `@modelcontextprotocol/server@2.0.0`;
+- black-box clients migrated to `@modelcontextprotocol/client@2.0.0`;
+- tool registration migrated to `registerTool()` with explicit Zod v4 schemas;
+- stdio serving migrated to `serveStdio(factory)`;
+- the full v0.1 Acceptance is pinned to the 2026-07-28 modern protocol era;
+- a dedicated regression test proves the same 19-tool surface is served to both legacy and modern clients;
+- the full black-box suite remains green;
+- no server-side LLM dependency was introduced.
 
 ### 2. Native Streamable HTTP adapter
 

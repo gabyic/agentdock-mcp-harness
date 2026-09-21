@@ -1,9 +1,6 @@
 #!/usr/bin/env node
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { createAgentDockServer } from "./server.js";
 
-const { server } = createAgentDockServer();
-const transport = new StdioServerTransport();
-
-await server.connect(transport);
-console.error("AgentDock v0.1 MCP server running on stdio");
+serveStdio(() => createAgentDockServer().server);
+console.error("AgentDock MCP server running on stdio (2026-07-28 capable)");

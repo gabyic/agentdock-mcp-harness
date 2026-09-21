@@ -13,8 +13,8 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 const execFileAsync = promisify(execFile);
 const projectRoot = path.resolve(
@@ -95,9 +95,13 @@ async function openClient(stateDir, label) {
 
   const client = new Client(
     { name: "agentdock-v01-acceptance-" + label, version: "0.1.0" },
-    { capabilities: {} },
+    {
+      capabilities: {},
+      versionNegotiation: { mode: { pin: "2026-07-28" } },
+    },
   );
   await client.connect(transport);
+  assert.equal(client.getProtocolEra(), "modern");
 
   return {
     client,
@@ -182,7 +186,11 @@ test("Ticket 08: AgentDock v0.1 automated MCP black-box acceptance", async (t) =
   );
   assert.deepEqual(
     Object.keys(packageJson.dependencies ?? {}).sort(),
-    ["@modelcontextprotocol/sdk", "zod"],
+    ["@modelcontextprotocol/server", "zod"],
+  );
+  assert.deepEqual(
+    Object.keys(packageJson.devDependencies ?? {}).sort(),
+    ["@modelcontextprotocol/client"],
   );
 
   const tempRoot = await mkdtemp(
