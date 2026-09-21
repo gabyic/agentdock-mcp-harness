@@ -5,6 +5,7 @@ import { FileEditService } from "./file-edit-service.js";
 import { FileQueryService } from "./file-query-service.js";
 import { GitService } from "./git-service.js";
 import { ProcessService } from "./process-service.js";
+import { StateStore } from "./state-store.js";
 import { TaskService } from "./task-service.js";
 
 function toolResult(data) {
@@ -49,11 +50,12 @@ function safe(handler) {
 }
 
 export function createAgentDockServer({ stateDir } = {}) {
+  const stateStore = new StateStore({ stateDir });
   const gitService = new GitService();
-  const taskService = new TaskService({ gitService, stateDir });
+  const taskService = new TaskService({ gitService, stateStore });
   const fileQueryService = new FileQueryService({ taskService });
   const fileEditService = new FileEditService({ taskService });
-  const processService = new ProcessService({ taskService });
+  const processService = new ProcessService({ taskService, stateStore });
 
   const server = new McpServer(
     { name: "AgentDock", version: "0.1.0" },
@@ -76,6 +78,20 @@ export function createAgentDockServer({ stateDir } = {}) {
     },
     safe(async ({ repo_path }) =>
       toolResult(await taskService.create({ repoPath: repo_path }))),
+  );
+
+  server.tool(
+    "task.resume",
+    "Resume a durable Task by task_id and return restored process metadata.",
+    { task_id: z.string().min(1) },
+    { readOnlyHint: true },
+    safe(async ({ task_id }) => {
+      const task = taskService.resume(task_id);
+      return toolResult({
+        ...task,
+        processes: processService.summariesForTask(task_id),
+      });
+    }),
   );
 
   server.tool(

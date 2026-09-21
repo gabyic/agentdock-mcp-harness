@@ -1,4 +1,5 @@
 # 04 — Task survives disconnect and AgentDock restart
+Status: IMPLEMENTED
 
 Blocked by: 02, 03
 

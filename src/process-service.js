@@ -5,14 +5,44 @@ import { resolveExistingTaskPath } from "./workspace-paths.js";
 
 export class ProcessService {
   #tasks;
+  #store;
   #processes = new Map();
 
-  constructor({ taskService }) {
+  constructor({ taskService, stateStore }) {
     this.#tasks = taskService;
+    this.#store = stateStore;
+  }
+
+  #restore(processId) {
+    const snapshot = this.#store.loadProcess(processId);
+    if (!snapshot) {
+      return null;
+    }
+
+    const record = {
+      ...snapshot,
+      output: snapshot.output ?? [],
+      child: null,
+    };
+
+    if (record.status === "RUNNING" || record.status === "CANCELLING") {
+      record.status = "INTERRUPTED";
+      record.ended_at ??= new Date().toISOString();
+      record.error ??=
+        "AgentDock restarted or lost ownership of the running process.";
+      this.#store.saveProcess(record);
+    }
+
+    this.#processes.set(processId, record);
+    return record;
   }
 
   #get(processId) {
-    const record = this.#processes.get(processId);
+    if (!/^proc_[0-9a-f-]{36}$/.test(processId)) {
+      throw new AgentDockError("INVALID_PROCESS_ID", "Invalid process_id format.");
+    }
+
+    const record = this.#processes.get(processId) ?? this.#restore(processId);
     if (!record) {
       throw new AgentDockError(
         "PROCESS_NOT_FOUND",
@@ -40,6 +70,20 @@ export class ProcessService {
       error: record.error,
       cancel_requested: record.cancel_requested,
     };
+  }
+
+  summariesForTask(taskId) {
+    const task = this.#tasks.get(taskId);
+    return (task.process_ids ?? []).map((processId) => {
+      const record = this.#get(processId);
+      if (record.task_id !== taskId) {
+        throw new AgentDockError(
+          "PROCESS_TASK_MISMATCH",
+          "Persisted process does not belong to this Task.",
+        );
+      }
+      return this.#public(record);
+    });
   }
 
   async start({
@@ -109,12 +153,15 @@ export class ProcessService {
       child,
     };
     this.#processes.set(processId, record);
+    this.#store.saveProcess(record);
+    this.#tasks.addProcess(taskId, processId);
 
     const append = (stream, chunk) => {
       record.output.push({
         stream,
         text: chunk.toString("utf8"),
       });
+      this.#store.saveProcess(record);
     };
 
     child.stdout.on("data", (chunk) => append("stdout", chunk));
@@ -124,6 +171,8 @@ export class ProcessService {
       record.status = "FAILED";
       record.error = error.message;
       record.ended_at = new Date().toISOString();
+      record.child = null;
+      this.#store.saveProcess(record);
     });
 
     child.on("close", (code, signal) => {
@@ -136,6 +185,7 @@ export class ProcessService {
       record.signal = signal;
       record.ended_at ??= new Date().toISOString();
       record.child = null;
+      this.#store.saveProcess(record);
     });
 
     return this.#public(record);
@@ -203,6 +253,7 @@ export class ProcessService {
 
     record.cancel_requested = true;
     record.status = "CANCELLING";
+    this.#store.saveProcess(record);
 
     try {
       if (record.pid) {
