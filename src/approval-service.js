@@ -156,6 +156,8 @@ export class ApprovalService {
   }
 
   respond({ taskId, approvalId, decision }) {
+    this.#tasks.assertActive(taskId);
+
     if (!DECISIONS.has(decision)) {
       throw new AgentDockError(
         "INVALID_APPROVAL_DECISION",

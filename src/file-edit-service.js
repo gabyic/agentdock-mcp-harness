@@ -25,6 +25,8 @@ export class FileEditService {
     oldText,
     newText,
   }) {
+    this.#tasks.assertActive(taskId);
+
     const { root, resolved } = await resolveExistingTaskPath(
       this.#tasks,
       taskId,
@@ -78,6 +80,8 @@ export class FileEditService {
   }
 
   async write({ taskId, filePath, content, overwrite = false }) {
+    this.#tasks.assertActive(taskId);
+
     const { root, resolved } = await resolveWritableTaskPath(
       this.#tasks,
       taskId,

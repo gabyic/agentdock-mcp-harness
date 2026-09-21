@@ -103,6 +103,73 @@ export function createAgentDockServer({ stateDir } = {}) {
   );
 
   server.tool(
+    "task.finish",
+    "Explicitly mark an ACTIVE Task COMPLETED after processes stop and the worktree is committed.",
+    { task_id: z.string().min(1) },
+    { destructiveHint: true },
+    safe(async ({ task_id }) => {
+      const task = taskService.assertActive(task_id);
+      const active = processService.activeForTask(task_id);
+      if (active.length > 0) {
+        throw new AgentDockError(
+          "TASK_PROCESSES_ACTIVE",
+          "Task still has running or cancelling processes.",
+          { processes: active },
+        );
+      }
+
+      const diff = await gitService.diff(task.worktree_path);
+      if (diff.changed_files.length > 0) {
+        throw new AgentDockError(
+          "TASK_UNCOMMITTED_CHANGES",
+          "Task worktree must be clean before finish.",
+          { changed_files: diff.changed_files },
+        );
+      }
+
+      const finalCommitSha = await gitService.currentHead(task.worktree_path);
+      return toolResult(
+        taskService.finish(task_id, { finalCommitSha }),
+      );
+    }),
+  );
+
+  server.tool(
+    "task.cancel",
+    "Cancel an ACTIVE Task, best-effort stopping its running processes while preserving the worktree.",
+    { task_id: z.string().min(1) },
+    { destructiveHint: true },
+    safe(async ({ task_id }) => {
+      taskService.assertActive(task_id);
+      const cancelledProcesses = processService.cancelAllForTask(task_id);
+      const task = taskService.cancel(task_id);
+      return toolResult({
+        ...task,
+        cancelled_processes: cancelledProcesses,
+      });
+    }),
+  );
+
+  server.tool(
+    "task.cleanup",
+    "Remove the worktree of a COMPLETED or CANCELLED Task while preserving durable Task metadata.",
+    { task_id: z.string().min(1) },
+    { destructiveHint: true },
+    safe(async ({ task_id }) => {
+      const active = processService.activeForTask(task_id);
+      if (active.length > 0) {
+        throw new AgentDockError(
+          "TASK_PROCESSES_ACTIVE",
+          "Wait for running/cancelling processes to stop before cleanup.",
+          { processes: active },
+        );
+      }
+
+      return toolResult(await taskService.cleanup(task_id));
+    }),
+  );
+
+  server.tool(
     "file.read",
     "Read a UTF-8 file from the Task worktree and return a content hash.",
     {
@@ -200,6 +267,28 @@ export function createAgentDockServer({ stateDir } = {}) {
       return toolResult({
         task_id,
         ...(await gitService.diff(task.worktree_path)),
+      });
+    }),
+  );
+
+
+  server.tool(
+    "git.commit",
+    "Stage all Task worktree changes and create a real local Git commit without push, merge, or deploy.",
+    {
+      task_id: z.string().min(1),
+      message: z.string().min(1).max(10000),
+    },
+    { destructiveHint: true },
+    safe(async ({ task_id, message }) => {
+      const task = taskService.assertActive(task_id);
+      const result = await gitService.commit(task.worktree_path, { message });
+      task.latest_commit_sha = result.commit_sha;
+      task.updated_at = new Date().toISOString();
+      taskService.save(task);
+      return toolResult({
+        task_id,
+        ...result,
       });
     }),
   );

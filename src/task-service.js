@@ -39,8 +39,32 @@ export class TaskService {
     return task;
   }
 
+  assertActive(taskId) {
+    const task = this.get(taskId);
+    if (task.status !== "ACTIVE") {
+      throw new AgentDockError(
+        "TASK_NOT_ACTIVE",
+        "Task is not ACTIVE: " + task.status,
+        { status: task.status },
+      );
+    }
+    if (task.workspace_cleaned) {
+      throw new AgentDockError(
+        "TASK_WORKSPACE_CLEANED",
+        "Task workspace has already been cleaned up.",
+      );
+    }
+    return task;
+  }
+
   resume(taskId) {
     const task = this.get(taskId);
+    if (task.workspace_cleaned) {
+      throw new AgentDockError(
+        "TASK_WORKSPACE_CLEANED",
+        "Task workspace has already been cleaned up.",
+      );
+    }
     if (!existsSync(task.worktree_path)) {
       throw new AgentDockError(
         "TASK_WORKTREE_MISSING",
@@ -59,6 +83,65 @@ export class TaskService {
       this.#store.saveTask(task);
     }
     return task;
+  }
+
+  finish(taskId, { finalCommitSha }) {
+    const task = this.assertActive(taskId);
+    const now = new Date().toISOString();
+    task.status = "COMPLETED";
+    task.final_commit_sha = finalCommitSha;
+    task.finished_at = now;
+    task.updated_at = now;
+    task.approval_grants = [];
+    return this.save(task);
+  }
+
+  cancel(taskId) {
+    const task = this.get(taskId);
+    if (task.status === "CANCELLED") {
+      return task;
+    }
+    if (task.status !== "ACTIVE") {
+      throw new AgentDockError(
+        "TASK_NOT_ACTIVE",
+        "Only an ACTIVE Task can be cancelled.",
+        { status: task.status },
+      );
+    }
+
+    const now = new Date().toISOString();
+    task.status = "CANCELLED";
+    task.cancelled_at = now;
+    task.updated_at = now;
+    task.approval_grants = [];
+    return this.save(task);
+  }
+
+  async cleanup(taskId) {
+    const task = this.get(taskId);
+    if (task.workspace_cleaned) {
+      return task;
+    }
+    if (task.status !== "COMPLETED" && task.status !== "CANCELLED") {
+      throw new AgentDockError(
+        "TASK_NOT_FINALIZED",
+        "Task must be COMPLETED or CANCELLED before cleanup.",
+        { status: task.status },
+      );
+    }
+
+    if (existsSync(task.worktree_path)) {
+      await this.#git.removeWorktree({
+        repoRoot: task.source_repo,
+        worktreePath: task.worktree_path,
+      });
+    }
+
+    const now = new Date().toISOString();
+    task.workspace_cleaned = true;
+    task.cleaned_at = now;
+    task.updated_at = now;
+    return this.save(task);
   }
 
   async create({ repoPath }) {
@@ -88,6 +171,8 @@ export class TaskService {
       process_ids: [],
       approvals: [],
       approval_grants: [],
+      final_commit_sha: null,
+      workspace_cleaned: false,
       created_at: now,
       updated_at: now,
     };

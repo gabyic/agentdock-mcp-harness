@@ -88,6 +88,28 @@ export class ProcessService {
     });
   }
 
+  activeForTask(taskId) {
+    return this.summariesForTask(taskId).filter(
+      (record) =>
+        record.status === "RUNNING" || record.status === "CANCELLING",
+    );
+  }
+
+  cancelAllForTask(taskId) {
+    const task = this.#tasks.get(taskId);
+    const results = [];
+    for (const processId of task.process_ids ?? []) {
+      const record = this.#get(processId);
+      if (
+        record.status === "RUNNING" ||
+        record.status === "CANCELLING"
+      ) {
+        results.push(this.cancel({ taskId, processId }));
+      }
+    }
+    return results;
+  }
+
   async start({
     taskId,
     argv,
@@ -95,6 +117,8 @@ export class ProcessService {
     cwd = ".",
     env = {},
   }) {
+    this.#tasks.assertActive(taskId);
+
     const hasArgv = Array.isArray(argv);
     const hasShell = typeof shell === "string";
 

@@ -1,4 +1,5 @@
 # 06 — Commit, finish, cancel, and cleanup Task lifecycle
+Status: IMPLEMENTED
 
 Blocked by: 02, 03, 04
 

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { promisify } from "node:util";
+import { AgentDockError } from "./errors.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -68,6 +69,10 @@ export class GitService {
     };
   }
 
+  async currentHead(worktreePath) {
+    return this.#git(worktreePath, ["rev-parse", "HEAD"]);
+  }
+
   async createDetachedWorktree({ repoRoot, baseHead, worktreePath }) {
     await this.#git(repoRoot, [
       "worktree",
@@ -128,6 +133,57 @@ export class GitService {
     return {
       changed_files: changedFiles,
       patch: [trackedPatch, ...untrackedPatches].filter(Boolean).join("\n"),
+    };
+  }
+
+  async commit(worktreePath, { message }) {
+    const before = await this.diff(worktreePath);
+    if (before.changed_files.length === 0) {
+      throw new AgentDockError(
+        "GIT_NOTHING_TO_COMMIT",
+        "Task worktree has no changes to commit.",
+      );
+    }
+
+    await this.#git(worktreePath, ["add", "-A"]);
+    await this.#git(worktreePath, [
+      "-c",
+      "commit.gpgSign=false",
+      "commit",
+      "--no-gpg-sign",
+      "-m",
+      message,
+    ]);
+
+    const commitSha = await this.currentHead(worktreePath);
+    const after = await this.diff(worktreePath);
+    if (after.changed_files.length !== 0) {
+      throw new AgentDockError(
+        "GIT_COMMIT_LEFT_DIRTY",
+        "Commit succeeded but Task worktree is still dirty.",
+        { changed_files: after.changed_files },
+      );
+    }
+
+    return {
+      commit_sha: commitSha,
+      message,
+      committed_files: before.changed_files,
+      worktree_clean: true,
+    };
+  }
+
+  async removeWorktree({ repoRoot, worktreePath }) {
+    await this.#git(repoRoot, [
+      "worktree",
+      "remove",
+      "--force",
+      worktreePath,
+    ]);
+    await this.#git(repoRoot, ["worktree", "prune"]);
+    return {
+      removed: true,
+      worktree_path: worktreePath,
     };
   }
 }
