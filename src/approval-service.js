@@ -17,10 +17,12 @@ function fingerprintOperation(value) {
 export class ApprovalService {
   #tasks;
   #policy;
+  #audit;
 
-  constructor({ taskService, policyService }) {
+  constructor({ taskService, policyService, auditService }) {
     this.#tasks = taskService;
     this.#policy = policyService;
+    this.#audit = auditService;
   }
 
   #ensureState(task) {
@@ -132,6 +134,16 @@ export class ApprovalService {
 
     task.approvals.push(request);
     this.#persist(task);
+    this.#audit?.append(taskId, {
+      event: "APPROVAL_REQUESTED",
+      approval_id: request.approval_id,
+      rule_id: request.rule_id,
+      approval_scope: request.approval_scope,
+      tool: request.tool,
+      operation: request.operation,
+      status: request.status,
+      created_at: request.created_at,
+    });
 
     throw new AgentDockError(
       "APPROVAL_REQUIRED",
@@ -195,6 +207,13 @@ export class ApprovalService {
       approval.status = "AWAITING_USER";
       approval.resolved_at = null;
       this.#persist(task);
+      this.#audit?.append(taskId, {
+        event: "APPROVAL_RESPONDED",
+        approval_id: approvalId,
+        decision,
+        status: approval.status,
+        responded_at: now,
+      });
       return {
         approval,
         grant: null,
@@ -205,6 +224,13 @@ export class ApprovalService {
       approval.status = "DENIED";
       approval.resolved_at = now;
       this.#persist(task);
+      this.#audit?.append(taskId, {
+        event: "APPROVAL_RESPONDED",
+        approval_id: approvalId,
+        decision,
+        status: approval.status,
+        responded_at: now,
+      });
       return {
         approval,
         grant: null,
@@ -225,6 +251,15 @@ export class ApprovalService {
     };
     task.approval_grants.push(grant);
     this.#persist(task);
+    this.#audit?.append(taskId, {
+      event: "APPROVAL_RESPONDED",
+      approval_id: approvalId,
+      decision,
+      status: approval.status,
+      grant_id: grant.grant_id,
+      approval_scope: grant.approval_scope,
+      responded_at: now,
+    });
 
     return {
       approval,

@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import {
+  auditAccess,
+  presentedPath,
   resolveExistingTaskPath,
-  taskRelativePath,
 } from "./workspace-paths.js";
 
 function sha256(buffer) {
@@ -35,25 +36,38 @@ async function listFiles(rootDir) {
 
 export class FileQueryService {
   #tasks;
+  #audit;
 
-  constructor({ taskService }) {
+  constructor({ taskService, auditService }) {
     this.#tasks = taskService;
+    this.#audit = auditService;
   }
 
   async read({ taskId, filePath }) {
-    const { root, resolved } = await resolveExistingTaskPath(
+    const location = await resolveExistingTaskPath(
       this.#tasks,
       taskId,
       filePath,
     );
-    const buffer = await readFile(resolved);
-    return {
+    const buffer = await readFile(location.resolved);
+    const result = {
       task_id: taskId,
-      path: taskRelativePath(root, resolved),
+      path: presentedPath(location),
+      access: auditAccess(location.scope, "READ"),
       size_bytes: buffer.length,
       sha256: sha256(buffer),
       content: buffer.toString("utf8"),
     };
+
+    this.#audit?.append(taskId, {
+      event: "FILE_READ",
+      access: result.access,
+      path: result.path,
+      size_bytes: result.size_bytes,
+      sha256: result.sha256,
+    });
+
+    return result;
   }
 
   async search({
@@ -63,20 +77,24 @@ export class FileQueryService {
     glob = "**/*",
     maxResults = 200,
   }) {
-    const { root, resolved } = await resolveExistingTaskPath(
+    const location = await resolveExistingTaskPath(
       this.#tasks,
       taskId,
       searchPath,
     );
-    const targetStat = await stat(resolved);
+    const targetStat = await stat(location.resolved);
     const candidates = targetStat.isFile()
-      ? [resolved]
-      : await listFiles(resolved);
+      ? [location.resolved]
+      : await listFiles(location.resolved);
     const matches = [];
 
     for (const absolutePath of candidates) {
-      const relativePath = taskRelativePath(root, absolutePath);
-      if (!path.matchesGlob(relativePath, glob)) {
+      const globPath =
+        location.scope === "HOST" && targetStat.isDirectory()
+          ? path.relative(location.resolved, absolutePath).split(path.sep).join("/")
+          : path.relative(location.root, absolutePath).split(path.sep).join("/");
+
+      if (!path.matchesGlob(globPath || path.basename(absolutePath), glob)) {
         continue;
       }
 
@@ -86,6 +104,11 @@ export class FileQueryService {
       } catch {
         continue;
       }
+
+      const resultPath =
+        location.scope === "HOST"
+          ? absolutePath
+          : path.relative(location.root, absolutePath).split(path.sep).join("/");
 
       const lines = content.split("\n");
       for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
@@ -97,20 +120,32 @@ export class FileQueryService {
           }
 
           matches.push({
-            path: relativePath,
+            path: resultPath,
             line: lineIndex + 1,
             column: columnIndex + 1,
             text: lines[lineIndex],
           });
 
           if (matches.length >= maxResults) {
-            return {
+            const result = {
               task_id: taskId,
               query,
+              path: presentedPath(location),
+              access: auditAccess(location.scope, "READ"),
               glob,
               matches,
               truncated: true,
             };
+            this.#audit?.append(taskId, {
+              event: "FILE_SEARCH",
+              access: result.access,
+              path: result.path,
+              query,
+              glob,
+              match_count: matches.length,
+              truncated: true,
+            });
+            return result;
           }
 
           fromIndex = columnIndex + Math.max(query.length, 1);
@@ -118,12 +153,24 @@ export class FileQueryService {
       }
     }
 
-    return {
+    const result = {
       task_id: taskId,
       query,
+      path: presentedPath(location),
+      access: auditAccess(location.scope, "READ"),
       glob,
       matches,
       truncated: false,
     };
+    this.#audit?.append(taskId, {
+      event: "FILE_SEARCH",
+      access: result.access,
+      path: result.path,
+      query,
+      glob,
+      match_count: matches.length,
+      truncated: false,
+    });
+    return result;
   }
 }

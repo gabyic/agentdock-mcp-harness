@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import {
+  auditAccess,
+  presentedPath,
   resolveExistingTaskPath,
   resolveWritableTaskPath,
-  taskRelativePath,
 } from "./workspace-paths.js";
 import { AgentDockError } from "./errors.js";
 
@@ -13,9 +14,11 @@ function sha256(buffer) {
 
 export class FileEditService {
   #tasks;
+  #audit;
 
-  constructor({ taskService }) {
+  constructor({ taskService, auditService }) {
     this.#tasks = taskService;
+    this.#audit = auditService;
   }
 
   async patch({
@@ -27,12 +30,12 @@ export class FileEditService {
   }) {
     this.#tasks.assertActive(taskId);
 
-    const { root, resolved } = await resolveExistingTaskPath(
+    const location = await resolveExistingTaskPath(
       this.#tasks,
       taskId,
       filePath,
     );
-    const before = await readFile(resolved);
+    const before = await readFile(location.resolved);
     const actualSha256 = sha256(before);
 
     if (actualSha256 !== expectedSha256) {
@@ -67,29 +70,40 @@ export class FileEditService {
       newText +
       current.slice(firstIndex + oldText.length);
 
-    await writeFile(resolved, updated, "utf8");
+    await writeFile(location.resolved, updated, "utf8");
     const after = Buffer.from(updated, "utf8");
-
-    return {
+    const result = {
       task_id: taskId,
-      path: taskRelativePath(root, resolved),
+      path: presentedPath(location),
+      access: auditAccess(location.scope, "WRITE"),
       previous_sha256: actualSha256,
       sha256: sha256(after),
       size_bytes: after.length,
     };
+
+    this.#audit?.append(taskId, {
+      event: "FILE_PATCH",
+      access: result.access,
+      path: result.path,
+      previous_sha256: result.previous_sha256,
+      sha256: result.sha256,
+      size_bytes: result.size_bytes,
+    });
+
+    return result;
   }
 
   async write({ taskId, filePath, content, overwrite = false }) {
     this.#tasks.assertActive(taskId);
 
-    const { root, resolved } = await resolveWritableTaskPath(
+    const location = await resolveWritableTaskPath(
       this.#tasks,
       taskId,
       filePath,
     );
 
     try {
-      await writeFile(resolved, content, {
+      await writeFile(location.resolved, content, {
         encoding: "utf8",
         flag: overwrite ? "w" : "wx",
       });
@@ -104,12 +118,24 @@ export class FileEditService {
     }
 
     const buffer = Buffer.from(content, "utf8");
-    return {
+    const result = {
       task_id: taskId,
-      path: taskRelativePath(root, resolved),
+      path: presentedPath(location),
+      access: auditAccess(location.scope, "WRITE"),
       sha256: sha256(buffer),
       size_bytes: buffer.length,
       overwrite,
     };
+
+    this.#audit?.append(taskId, {
+      event: "FILE_WRITE",
+      access: result.access,
+      path: result.path,
+      sha256: result.sha256,
+      size_bytes: result.size_bytes,
+      overwrite,
+    });
+
+    return result;
   }
 }

@@ -7,12 +7,14 @@ export class ProcessService {
   #tasks;
   #store;
   #approval;
+  #audit;
   #processes = new Map();
 
-  constructor({ taskService, stateStore, approvalService }) {
+  constructor({ taskService, stateStore, approvalService, auditService }) {
     this.#tasks = taskService;
     this.#store = stateStore;
     this.#approval = approvalService;
+    this.#audit = auditService;
   }
 
   #restore(processId) {
@@ -24,6 +26,12 @@ export class ProcessService {
     const record = {
       ...snapshot,
       output: snapshot.output ?? [],
+      output_floor_cursor: snapshot.output_floor_cursor ?? 0,
+      next_output_cursor:
+        snapshot.next_output_cursor ?? (snapshot.output?.length ?? 0),
+      output_total_bytes: snapshot.output_total_bytes ?? 0,
+      persisted_output_truncated:
+        snapshot.persisted_output_truncated ?? false,
       child: null,
     };
 
@@ -33,6 +41,15 @@ export class ProcessService {
       record.error ??=
         "AgentDock restarted or lost ownership of the running process.";
       this.#store.saveProcess(record);
+      this.#audit?.append(record.task_id, {
+        event: "PROCESS_INTERRUPTED",
+        process_id: record.process_id,
+        pid: record.pid,
+        status: record.status,
+        cwd: record.cwd,
+        ended_at: record.ended_at,
+        reason: record.error,
+      });
     }
 
     this.#processes.set(processId, record);
@@ -71,6 +88,8 @@ export class ProcessService {
       signal: record.signal,
       error: record.error,
       cancel_requested: record.cancel_requested,
+      persisted_output_truncated:
+        record.persisted_output_truncated ?? false,
     };
   }
 
@@ -141,7 +160,7 @@ export class ProcessService {
       );
     }
 
-    const { resolved } = await resolveExistingTaskPath(
+    const location = await resolveExistingTaskPath(
       this.#tasks,
       taskId,
       cwd,
@@ -152,7 +171,7 @@ export class ProcessService {
       tool: "process.start",
       shell,
       argv,
-      cwd: resolved,
+      cwd: location.resolved,
       env,
     });
 
@@ -161,7 +180,7 @@ export class ProcessService {
     const command = hasArgv ? argv[0] : shell;
     const args = hasArgv ? argv.slice(1) : [];
     const child = spawn(command, args, {
-      cwd: resolved,
+      cwd: location.resolved,
       env: { ...process.env, ...env },
       shell: hasShell,
       detached: true,
@@ -176,7 +195,8 @@ export class ProcessService {
       mode,
       argv: hasArgv ? [...argv] : undefined,
       shell: hasShell ? shell : undefined,
-      cwd: resolved,
+      cwd: location.resolved,
+      cwd_scope: location.scope,
       env: { ...env },
       started_at: new Date().toISOString(),
       ended_at: null,
@@ -185,17 +205,38 @@ export class ProcessService {
       error: null,
       cancel_requested: false,
       output: [],
+      output_floor_cursor: 0,
+      next_output_cursor: 0,
+      output_total_bytes: 0,
+      persisted_output_truncated: false,
       child,
     };
     this.#processes.set(processId, record);
     this.#store.saveProcess(record);
     this.#tasks.addProcess(taskId, processId);
 
+    this.#audit?.append(taskId, {
+      event: "PROCESS_STARTED",
+      process_id: processId,
+      pid: record.pid,
+      mode,
+      argv: record.argv,
+      shell: record.shell,
+      cwd: record.cwd,
+      cwd_scope: record.cwd_scope,
+      env,
+      started_at: record.started_at,
+    });
+
     const append = (stream, chunk) => {
+      const text = chunk.toString("utf8");
       record.output.push({
+        cursor: record.next_output_cursor,
         stream,
-        text: chunk.toString("utf8"),
+        text,
       });
+      record.next_output_cursor += 1;
+      record.output_total_bytes += Buffer.byteLength(text, "utf8");
       this.#store.saveProcess(record);
     };
 
@@ -208,6 +249,17 @@ export class ProcessService {
       record.ended_at = new Date().toISOString();
       record.child = null;
       this.#store.saveProcess(record);
+      this.#audit?.append(taskId, {
+        event: "PROCESS_FAILED",
+        process_id: processId,
+        pid: record.pid,
+        status: record.status,
+        cwd: record.cwd,
+        exit_code: record.exit_code,
+        signal: record.signal,
+        error: record.error,
+        ended_at: record.ended_at,
+      });
     });
 
     child.on("close", (code, signal) => {
@@ -221,6 +273,17 @@ export class ProcessService {
       record.ended_at ??= new Date().toISOString();
       record.child = null;
       this.#store.saveProcess(record);
+      this.#audit?.append(taskId, {
+        event: "PROCESS_ENDED",
+        process_id: processId,
+        pid: record.pid,
+        status: record.status,
+        cwd: record.cwd,
+        exit_code: record.exit_code,
+        signal: record.signal,
+        error: record.error,
+        ended_at: record.ended_at,
+      });
     });
 
     return this.#public(record);
@@ -245,20 +308,36 @@ export class ProcessService {
         "Process does not belong to this Task.",
       );
     }
-    if (!Number.isInteger(cursor) || cursor < 0 || cursor > record.output.length) {
+
+    const floor = record.output_floor_cursor ?? 0;
+    const next = record.next_output_cursor ?? record.output.length;
+    if (!Number.isInteger(cursor) || cursor < 0 || cursor > next) {
       throw new AgentDockError(
         "INVALID_OUTPUT_CURSOR",
         "Cursor is outside the available process output range.",
+        {
+          output_floor_cursor: floor,
+          next_cursor: next,
+        },
       );
     }
 
-    const chunks = record.output.slice(cursor);
+    const effectiveCursor = Math.max(cursor, floor);
+    const chunks = record.output.filter(
+      (chunk) => (chunk.cursor ?? 0) >= effectiveCursor,
+    );
+
     return {
       process_id: processId,
       task_id: taskId,
       status: record.status,
       cursor,
-      next_cursor: record.output.length,
+      effective_cursor: effectiveCursor,
+      output_floor_cursor: floor,
+      next_cursor: next,
+      truncated_before_cursor: cursor < floor,
+      persisted_output_truncated:
+        record.persisted_output_truncated ?? false,
       chunks,
       stdout_chunk: chunks
         .filter((chunk) => chunk.stream === "stdout")
@@ -289,6 +368,14 @@ export class ProcessService {
     record.cancel_requested = true;
     record.status = "CANCELLING";
     this.#store.saveProcess(record);
+    this.#audit?.append(taskId, {
+      event: "PROCESS_CANCEL_REQUESTED",
+      process_id: processId,
+      pid: record.pid,
+      status: record.status,
+      cwd: record.cwd,
+      requested_at: new Date().toISOString(),
+    });
 
     try {
       if (record.pid) {

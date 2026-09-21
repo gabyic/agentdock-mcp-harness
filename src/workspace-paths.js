@@ -11,20 +11,19 @@ function ensureInside(root, candidate) {
   }
 }
 
-function lexicalTaskPath(taskService, taskId, inputPath) {
+function lexicalWorkspacePath(taskService, taskId, inputPath) {
   const task = taskService.get(taskId);
-
-  if (path.isAbsolute(inputPath)) {
-    throw new AgentDockError(
-      "HOST_PATH_NOT_IMPLEMENTED",
-      "Ticket 02 only resolves paths inside the Task worktree.",
-    );
-  }
-
   const root = path.resolve(task.worktree_path);
   const resolved = path.resolve(root, inputPath || ".");
   ensureInside(root, resolved);
-  return { task, root, resolved };
+  return { task, root, resolved, scope: "WORKSPACE" };
+}
+
+async function existingHostPath(taskService, taskId, inputPath) {
+  const task = taskService.get(taskId);
+  const root = await realpath(task.worktree_path);
+  const resolved = await realpath(path.resolve(inputPath));
+  return { task, root, resolved, scope: "HOST" };
 }
 
 export async function resolveExistingTaskPath(
@@ -32,19 +31,19 @@ export async function resolveExistingTaskPath(
   taskId,
   inputPath,
 ) {
-  const lexical = lexicalTaskPath(taskService, taskId, inputPath);
+  if (path.isAbsolute(inputPath)) {
+    return existingHostPath(taskService, taskId, inputPath);
+  }
+
+  const lexical = lexicalWorkspacePath(taskService, taskId, inputPath);
   const root = await realpath(lexical.root);
   const resolved = await realpath(lexical.resolved);
   ensureInside(root, resolved);
-  return { task: lexical.task, root, resolved };
+  return { task: lexical.task, root, resolved, scope: "WORKSPACE" };
 }
 
-export async function resolveWritableTaskPath(
-  taskService,
-  taskId,
-  inputPath,
-) {
-  const lexical = lexicalTaskPath(taskService, taskId, inputPath);
+async function writableWorkspacePath(taskService, taskId, inputPath) {
+  const lexical = lexicalWorkspacePath(taskService, taskId, inputPath);
   const root = await realpath(lexical.root);
   const relativeParent = path.relative(
     lexical.root,
@@ -92,9 +91,48 @@ export async function resolveWritableTaskPath(
     }
   }
 
-  return { task: lexical.task, root, resolved };
+  return { task: lexical.task, root, resolved, scope: "WORKSPACE" };
+}
+
+async function writableHostPath(taskService, taskId, inputPath) {
+  const task = taskService.get(taskId);
+  const root = await realpath(task.worktree_path);
+  const absolute = path.resolve(inputPath);
+  await mkdir(path.dirname(absolute), { recursive: true });
+
+  const parent = await realpath(path.dirname(absolute));
+  let resolved = path.join(parent, path.basename(absolute));
+
+  try {
+    resolved = await realpath(resolved);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  return { task, root, resolved, scope: "HOST" };
+}
+
+export async function resolveWritableTaskPath(
+  taskService,
+  taskId,
+  inputPath,
+) {
+  if (path.isAbsolute(inputPath)) {
+    return writableHostPath(taskService, taskId, inputPath);
+  }
+  return writableWorkspacePath(taskService, taskId, inputPath);
 }
 
 export function taskRelativePath(root, absolutePath) {
   return path.relative(root, absolutePath).split(path.sep).join("/");
+}
+
+export function presentedPath({ root, resolved, scope }) {
+  return scope === "HOST" ? resolved : taskRelativePath(root, resolved);
+}
+
+export function auditAccess(scope, operation) {
+  return scope + "_" + operation;
 }

@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { AgentDockError } from "./errors.js";
 import { ApprovalService } from "./approval-service.js";
+import { AuditService } from "./audit-service.js";
 import { FileEditService } from "./file-edit-service.js";
 import { FileQueryService } from "./file-query-service.js";
 import { GitService } from "./git-service.js";
@@ -53,16 +54,28 @@ function safe(handler) {
 
 export function createAgentDockServer({ stateDir } = {}) {
   const stateStore = new StateStore({ stateDir });
+  const auditService = new AuditService({ stateStore });
   const gitService = new GitService();
   const taskService = new TaskService({ gitService, stateStore });
   const policyService = new PolicyService();
-  const approvalService = new ApprovalService({ taskService, policyService });
-  const fileQueryService = new FileQueryService({ taskService });
-  const fileEditService = new FileEditService({ taskService });
+  const approvalService = new ApprovalService({
+    taskService,
+    policyService,
+    auditService,
+  });
+  const fileQueryService = new FileQueryService({
+    taskService,
+    auditService,
+  });
+  const fileEditService = new FileEditService({
+    taskService,
+    auditService,
+  });
   const processService = new ProcessService({
     taskService,
     stateStore,
     approvalService,
+    auditService,
   });
 
   const server = new McpServer(
@@ -84,8 +97,19 @@ export function createAgentDockServer({ stateDir } = {}) {
     {
       repo_path: z.string().min(1).describe("Path inside the source Git repository"),
     },
-    safe(async ({ repo_path }) =>
-      toolResult(await taskService.create({ repoPath: repo_path }))),
+    safe(async ({ repo_path }) => {
+      const task = await taskService.create({ repoPath: repo_path });
+      auditService.append(task.task_id, {
+        event: "TASK_CREATED",
+        status: task.status,
+        source_repo: task.source_repo,
+        base_head: task.base_head,
+        worktree_path: task.worktree_path,
+        source_dirty: task.source_dirty,
+        created_at: task.created_at,
+      });
+      return toolResult(task);
+    }),
   );
 
   server.tool(
@@ -95,9 +119,16 @@ export function createAgentDockServer({ stateDir } = {}) {
     { readOnlyHint: true },
     safe(async ({ task_id }) => {
       const task = taskService.resume(task_id);
+      const processes = processService.summariesForTask(task_id);
+      auditService.append(task_id, {
+        event: "TASK_RESUMED",
+        status: task.status,
+        worktree_path: task.worktree_path,
+        process_count: processes.length,
+      });
       return toolResult({
         ...task,
-        processes: processService.summariesForTask(task_id),
+        processes,
       });
     }),
   );
@@ -128,9 +159,14 @@ export function createAgentDockServer({ stateDir } = {}) {
       }
 
       const finalCommitSha = await gitService.currentHead(task.worktree_path);
-      return toolResult(
-        taskService.finish(task_id, { finalCommitSha }),
-      );
+      const finished = taskService.finish(task_id, { finalCommitSha });
+      auditService.append(task_id, {
+        event: "TASK_FINISHED",
+        status: finished.status,
+        final_commit_sha: finished.final_commit_sha,
+        finished_at: finished.finished_at,
+      });
+      return toolResult(finished);
     }),
   );
 
@@ -143,6 +179,14 @@ export function createAgentDockServer({ stateDir } = {}) {
       taskService.assertActive(task_id);
       const cancelledProcesses = processService.cancelAllForTask(task_id);
       const task = taskService.cancel(task_id);
+      auditService.append(task_id, {
+        event: "TASK_CANCELLED",
+        status: task.status,
+        cancelled_process_ids: cancelledProcesses.map(
+          (process) => process.process_id,
+        ),
+        cancelled_at: task.cancelled_at,
+      });
       return toolResult({
         ...task,
         cancelled_processes: cancelledProcesses,
@@ -165,13 +209,20 @@ export function createAgentDockServer({ stateDir } = {}) {
         );
       }
 
-      return toolResult(await taskService.cleanup(task_id));
+      const cleaned = await taskService.cleanup(task_id);
+      auditService.append(task_id, {
+        event: "TASK_CLEANED",
+        status: cleaned.status,
+        worktree_path: cleaned.worktree_path,
+        cleaned_at: cleaned.cleaned_at,
+      });
+      return toolResult(cleaned);
     }),
   );
 
   server.tool(
     "file.read",
-    "Read a UTF-8 file from the Task worktree and return a content hash.",
+    "Read a UTF-8 file. Relative paths use the Task worktree; absolute paths use the host OS.",
     {
       task_id: z.string().min(1),
       path: z.string().min(1),
@@ -188,7 +239,7 @@ export function createAgentDockServer({ stateDir } = {}) {
 
   server.tool(
     "file.search",
-    "Search Task worktree files using deterministic text matching and a glob.",
+    "Search files using deterministic text matching and a glob. Relative paths use the Task worktree; absolute paths use the host OS.",
     {
       task_id: z.string().min(1),
       query: z.string().min(1),
@@ -211,7 +262,7 @@ export function createAgentDockServer({ stateDir } = {}) {
 
   server.tool(
     "file.patch",
-    "Patch an existing Task file only if its previously-read SHA-256 still matches.",
+    "Patch an existing file if its SHA-256 still matches. Relative paths use the Task worktree; absolute paths use the host OS.",
     {
       task_id: z.string().min(1),
       path: z.string().min(1),
@@ -239,7 +290,7 @@ export function createAgentDockServer({ stateDir } = {}) {
 
   server.tool(
     "file.write",
-    "Create a new UTF-8 Task file or explicitly replace an existing file.",
+    "Create or replace a UTF-8 file. Relative paths use the Task worktree; absolute paths use the host OS.",
     {
       task_id: z.string().min(1),
       path: z.string().min(1),
@@ -286,6 +337,13 @@ export function createAgentDockServer({ stateDir } = {}) {
       task.latest_commit_sha = result.commit_sha;
       task.updated_at = new Date().toISOString();
       taskService.save(task);
+      auditService.append(task_id, {
+        event: "GIT_COMMIT",
+        commit_sha: result.commit_sha,
+        message: result.message,
+        committed_files: result.committed_files,
+        worktree_clean: result.worktree_clean,
+      });
       return toolResult({
         task_id,
         ...result,
@@ -293,6 +351,26 @@ export function createAgentDockServer({ stateDir } = {}) {
     }),
   );
 
+
+  server.tool(
+    "audit.get",
+    "Return structured persisted Task audit entries after a sequence cursor.",
+    {
+      task_id: z.string().min(1),
+      after_sequence: z.number().int().min(0).optional(),
+      limit: z.number().int().min(1).max(1000).optional(),
+    },
+    { readOnlyHint: true },
+    safe(async ({ task_id, after_sequence, limit }) => {
+      taskService.get(task_id);
+      return toolResult(
+        auditService.get(task_id, {
+          afterSequence: after_sequence,
+          limit,
+        }),
+      );
+    }),
+  );
 
   server.tool(
     "approval.get",

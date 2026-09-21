@@ -1,4 +1,5 @@
 # 07 — Host access and structured Audit
+Status: IMPLEMENTED
 
 Blocked by: 02, 03, 05, 06
 
