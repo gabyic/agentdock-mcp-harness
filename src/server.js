@@ -4,6 +4,7 @@ import { AgentDockError } from "./errors.js";
 import { FileEditService } from "./file-edit-service.js";
 import { FileQueryService } from "./file-query-service.js";
 import { GitService } from "./git-service.js";
+import { ProcessService } from "./process-service.js";
 import { TaskService } from "./task-service.js";
 
 function toolResult(data) {
@@ -52,6 +53,7 @@ export function createAgentDockServer({ stateDir } = {}) {
   const taskService = new TaskService({ gitService, stateDir });
   const fileQueryService = new FileQueryService({ taskService });
   const fileEditService = new FileEditService({ taskService });
+  const processService = new ProcessService({ taskService });
 
   const server = new McpServer(
     { name: "AgentDock", version: "0.1.0" },
@@ -176,6 +178,76 @@ export function createAgentDockServer({ stateDir } = {}) {
         ...(await gitService.diff(task.worktree_path)),
       });
     }),
+  );
+
+
+  server.tool(
+    "process.start",
+    "Start an asynchronous Task process using explicit argv or shell mode.",
+    {
+      task_id: z.string().min(1),
+      argv: z.array(z.string()).min(1).optional(),
+      shell: z.string().min(1).optional(),
+      cwd: z.string().optional(),
+      env: z.record(z.string(), z.string()).optional(),
+    },
+    safe(async ({ task_id, argv, shell, cwd, env }) =>
+      toolResult(
+        await processService.start({
+          taskId: task_id,
+          argv,
+          shell,
+          cwd,
+          env,
+        }),
+      )),
+  );
+
+  server.tool(
+    "process.status",
+    "Return current status and execution metadata for a Task process.",
+    {
+      task_id: z.string().min(1),
+      process_id: z.string().min(1),
+    },
+    { readOnlyHint: true },
+    safe(async ({ task_id, process_id }) =>
+      toolResult(
+        processService.status({ taskId: task_id, processId: process_id }),
+      )),
+  );
+
+  server.tool(
+    "process.output",
+    "Read process stdout/stderr incrementally from a pull cursor.",
+    {
+      task_id: z.string().min(1),
+      process_id: z.string().min(1),
+      cursor: z.number().int().min(0).optional(),
+    },
+    { readOnlyHint: true },
+    safe(async ({ task_id, process_id, cursor }) =>
+      toolResult(
+        processService.output({
+          taskId: task_id,
+          processId: process_id,
+          cursor,
+        }),
+      )),
+  );
+
+  server.tool(
+    "process.cancel",
+    "Best-effort cancel a running Task process and its Linux process group.",
+    {
+      task_id: z.string().min(1),
+      process_id: z.string().min(1),
+    },
+    { destructiveHint: true },
+    safe(async ({ task_id, process_id }) =>
+      toolResult(
+        processService.cancel({ taskId: task_id, processId: process_id }),
+      )),
   );
 
   return { server };

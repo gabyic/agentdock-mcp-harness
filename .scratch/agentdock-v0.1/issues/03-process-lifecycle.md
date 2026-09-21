@@ -1,4 +1,5 @@
 # 03 — Real asynchronous development Process lifecycle
+Status: IMPLEMENTED
 
 Blocked by: 01
 
