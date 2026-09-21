@@ -6,6 +6,13 @@ The project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Native stateless Streamable HTTP transport for MCP on `/mcp`, while retaining stdio.
+- Loopback-only HTTP defaults, Host/Origin validation, and a `/healthz` endpoint.
+- Shared AgentDock runtime across per-request HTTP MCP server instances so asynchronous process ownership survives separate HTTP requests.
+- Black-box HTTP coverage for both legacy and MCP 2026-07-28 clients, including process lifecycle and DNS-rebinding guards.
+
 ### Changed
 
 - Migrated Core from the monolithic `@modelcontextprotocol/sdk` v1 package to the stable split MCP TypeScript SDK v2 packages.

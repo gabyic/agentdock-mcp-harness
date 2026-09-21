@@ -186,7 +186,7 @@ test("Ticket 08: AgentDock v0.1 automated MCP black-box acceptance", async (t) =
   );
   assert.deepEqual(
     Object.keys(packageJson.dependencies ?? {}).sort(),
-    ["@modelcontextprotocol/server", "zod"],
+    ["@modelcontextprotocol/node", "@modelcontextprotocol/server", "zod"],
   );
   assert.deepEqual(
     Object.keys(packageJson.devDependencies ?? {}).sort(),

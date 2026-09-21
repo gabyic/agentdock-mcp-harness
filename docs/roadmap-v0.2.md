@@ -23,17 +23,20 @@ Completed in v0.2-01:
 - the full black-box suite remains green;
 - no server-side LLM dependency was introduced.
 
-### 2. Native Streamable HTTP adapter
+### 2. Native Streamable HTTP adapter — DONE
 
-Keep stdio as a first-class local transport and add a native Streamable HTTP entry point.
+Completed in v0.2-02:
 
-Core requirements:
-
-- stdio remains supported;
-- HTTP transport contains no engineering business logic;
-- Task durability remains transport-independent;
-- clean process shutdown and restart semantics are tested;
-- Host-header / deployment security guidance follows current MCP SDK recommendations.
+- stdio remains a first-class transport;
+- native Node.js Streamable HTTP is available through `npm run start:http`;
+- the HTTP endpoint uses the SDK v2 `createMcpHandler(factory)` per-request model and the official `@modelcontextprotocol/node` adapter;
+- modern MCP 2026-07-28 and legacy clients share the same 19-tool surface;
+- transport requests are stateless, while AgentDock Task/Process/Approval/Audit services share one process runtime;
+- asynchronous process ownership remains correct across separate HTTP requests;
+- HTTP binds to `127.0.0.1:3100` by default;
+- Host and Origin guards are enabled by default, and non-loopback binds require an explicit host allowlist;
+- `/healthz` provides a non-MCP process health endpoint;
+- HTTP transport contains no Git/file/process business logic.
 
 Authentication remains a deployment boundary rather than a hidden Core dependency.
 

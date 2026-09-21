@@ -1,6 +1,6 @@
 # Deployment
 
-AgentDock MCP Harness v0.1 is a deterministic MCP server running over stdio.
+AgentDock MCP Harness v0.2 development builds support both stdio and native stateless Streamable HTTP. Core authentication remains an external deployment concern.
 
 ## Local stdio
 
@@ -27,6 +27,40 @@ A generic MCP client configuration looks like:
 
 Adjust paths for the actual account.
 
+## Native Streamable HTTP
+
+Development builds in the v0.2 line include a native HTTP entry point:
+
+```bash
+npm run start:http
+```
+
+Secure defaults:
+
+```text
+bind:   127.0.0.1
+port:   3100
+MCP:    /mcp
+health: /healthz
+mode:   stateless Streamable HTTP
+```
+
+The HTTP transport supports both legacy MCP clients and the MCP 2026-07-28 modern protocol era.
+
+Environment overrides currently available before the v0.2 configuration-schema work lands:
+
+```bash
+AGENTDOCK_HTTP_HOST=127.0.0.1
+AGENTDOCK_HTTP_PORT=3100
+AGENTDOCK_HTTP_PATH=/mcp
+AGENTDOCK_HTTP_ALLOWED_HOSTS=localhost,127.0.0.1
+AGENTDOCK_HTTP_ALLOWED_ORIGINS=localhost,127.0.0.1
+```
+
+A non-loopback bind fails closed unless `AGENTDOCK_HTTP_ALLOWED_HOSTS` is explicitly set. Requests with a present Origin header are checked against the Origin allowlist; normal non-browser MCP clients that omit Origin remain supported.
+
+The native HTTP endpoint does **not** add authentication. For remote use, keep AgentDock on loopback and put an authenticated TLS reverse proxy / MCP gateway in front of it.
+
 ## State
 
 Default user-local state:
@@ -41,24 +75,26 @@ Protect it as privileged application data.
 
 ## Remote ChatGPT deployment
 
-v0.1 deliberately does not own public ingress, TLS, OAuth, DNS, or reverse-proxy configuration.
+AgentDock Core deliberately does not own public ingress, TLS, OAuth, DNS, or account authentication.
 
-A production remote topology is:
+With native Streamable HTTP, the preferred v0.2 topology is:
 
 ```text
 ChatGPT Web
    |
    | HTTPS + OAuth
    v
-authenticated MCP gateway
+authenticated reverse proxy / MCP gateway
    |
-   | stdio bridge
+   | loopback Streamable HTTP
    v
-AgentDock Core
+AgentDock :3100/mcp
    |
    v
 Linux host
 ```
+
+The existing stdio bridge topology remains supported for deployments that already use one.
 
 The gateway should:
 

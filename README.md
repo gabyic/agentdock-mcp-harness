@@ -327,14 +327,16 @@ npm run acceptance:v0.1
 
 ## Requirements
 
-v0.1 currently targets:
+AgentDock currently targets:
 
 - Linux
 - Node.js 24+
 - Git
 - an MCP client capable of invoking the exposed tools
 
-macOS and Windows are not implemented in v0.1.
+The v0.1 release provides stdio. The v0.2 development line now supports both stdio and native stateless Streamable HTTP on loopback by default.
+
+macOS and Windows execution backends are not implemented yet.
 
 ## Install from source
 
@@ -381,8 +383,8 @@ See [SECURITY.md](SECURITY.md).
 
 v0.2 focuses on production distribution and protocol modernization rather than feature sprawl:
 
-- MCP 2026-07-28 / TypeScript SDK v2 migration;
-- native Streamable HTTP adapter while retaining stdio;
+- ✅ MCP 2026-07-28 / TypeScript SDK v2 migration;
+- ✅ native stateless Streamable HTTP while retaining stdio;
 - stable configuration schema and `doctor` diagnostics;
 - installation / upgrade / uninstall lifecycle;
 - service health and restart hardening;

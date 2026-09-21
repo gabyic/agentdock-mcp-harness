@@ -75,7 +75,7 @@ function registerTool(
   );
 }
 
-export function createAgentDockServer({ stateDir } = {}) {
+export function createAgentDockRuntime({ stateDir } = {}) {
   const stateStore = new StateStore({ stateDir });
   const auditService = new AuditService({ stateStore });
   const gitService = new GitService();
@@ -101,8 +101,33 @@ export function createAgentDockServer({ stateDir } = {}) {
     auditService,
   });
 
+  return {
+    stateStore,
+    auditService,
+    gitService,
+    taskService,
+    policyService,
+    approvalService,
+    fileQueryService,
+    fileEditService,
+    processService,
+  };
+}
+
+export function createAgentDockServer({ stateDir, runtime } = {}) {
+  const services = runtime ?? createAgentDockRuntime({ stateDir });
+  const {
+    auditService,
+    gitService,
+    taskService,
+    approvalService,
+    fileQueryService,
+    fileEditService,
+    processService,
+  } = services;
+
   const server = new McpServer(
-    { name: "AgentDock", version: "0.2.0-dev.1" },
+    { name: "AgentDock", version: "0.2.0-dev.2" },
     { capabilities: { tools: {} } },
   );
 
@@ -523,5 +548,5 @@ export function createAgentDockServer({ stateDir } = {}) {
       )),
   );
 
-  return { server };
+  return { server, runtime: services };
 }
