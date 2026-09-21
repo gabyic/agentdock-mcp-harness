@@ -8,6 +8,8 @@ The project follows Semantic Versioning.
 
 ### Added
 
+- Versioned JSON configuration schema v1 with `~/.config/agentdock/config.json` discovery and `AGENTDOCK_CONFIG` override.
+- Configurable persisted process-output bounds and bounded per-Task audit retention with truncation metadata.
 - Native stateless Streamable HTTP transport for MCP on `/mcp`, while retaining stdio.
 - Loopback-only HTTP defaults, Host/Origin validation, and a `/healthz` endpoint.
 - Shared AgentDock runtime across per-request HTTP MCP server instances so asynchronous process ownership survives separate HTTP requests.

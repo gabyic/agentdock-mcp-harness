@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { AgentDockError } from "./errors.js";
+import { loadAgentDockConfig } from "./config.js";
 import { ApprovalService } from "./approval-service.js";
 import { AuditService } from "./audit-service.js";
 import { FileEditService } from "./file-edit-service.js";
@@ -75,12 +76,27 @@ function registerTool(
   );
 }
 
-export function createAgentDockRuntime({ stateDir } = {}) {
-  const stateStore = new StateStore({ stateDir });
-  const auditService = new AuditService({ stateStore });
+export function createAgentDockRuntime({ stateDir, config } = {}) {
+  const resolvedConfig =
+    config ??
+    loadAgentDockConfig({
+      overrides: stateDir ? { state: { dir: stateDir } } : {},
+    }).config;
+
+  const stateStore = new StateStore({
+    stateDir: resolvedConfig.state.dir,
+    maxPersistedOutputBytes:
+      resolvedConfig.state.persisted_process_output_bytes,
+  });
+  const auditService = new AuditService({
+    stateStore,
+    maxEntriesPerTask: resolvedConfig.audit.max_entries_per_task,
+  });
   const gitService = new GitService();
   const taskService = new TaskService({ gitService, stateStore });
-  const policyService = new PolicyService();
+  const policyService = new PolicyService({
+    rules: resolvedConfig.policy.rules,
+  });
   const approvalService = new ApprovalService({
     taskService,
     policyService,
@@ -111,11 +127,13 @@ export function createAgentDockRuntime({ stateDir } = {}) {
     fileQueryService,
     fileEditService,
     processService,
+    config: resolvedConfig,
   };
 }
 
-export function createAgentDockServer({ stateDir, runtime } = {}) {
-  const services = runtime ?? createAgentDockRuntime({ stateDir });
+export function createAgentDockServer({ stateDir, runtime, config } = {}) {
+  const services =
+    runtime ?? createAgentDockRuntime({ stateDir, config });
   const {
     auditService,
     gitService,
@@ -127,7 +145,7 @@ export function createAgentDockServer({ stateDir, runtime } = {}) {
   } = services;
 
   const server = new McpServer(
-    { name: "AgentDock", version: "0.2.0-dev.2" },
+    { name: "AgentDock", version: "0.2.0-dev.3" },
     { capabilities: { tools: {} } },
   );
 

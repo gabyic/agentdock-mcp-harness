@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "state": {
+    "dir": "~/.local/state/agentdock",
+    "persisted_process_output_bytes": 65536
+  },
+  "audit": {
+    "max_entries_per_task": 5000
+  },
+  "policy": {
+    "rules": []
+  },
+  "transport": {
+    "mode": "stdio",
+    "http": {
+      "host": "127.0.0.1",
+      "port": 3100,
+      "path": "/mcp",
+      "health_path": "/healthz",
+      "allowed_hosts": [
+        "localhost",
+        "127.0.0.1",
+        "[::1]"
+      ],
+      "allowed_origins": [
+        "localhost",
+        "127.0.0.1",
+        "[::1]"
+      ]
+    }
+  }
+}

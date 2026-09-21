@@ -7,7 +7,12 @@ SOURCE_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 INSTALL_DIR="${AGENTDOCK_INSTALL_DIR:-${HOME}/.local/share/agentdock-mcp-harness}"
 BIN_DIR="${AGENTDOCK_BIN_DIR:-${HOME}/.local/bin}"
-STATE_DIR="${AGENTDOCK_STATE_DIR:-${HOME}/.local/state/agentdock}"
+DEFAULT_STATE_DIR="${HOME}/.local/state/agentdock"
+STATE_DIR="${AGENTDOCK_STATE_DIR:-${DEFAULT_STATE_DIR}}"
+STATE_DIR_EXPLICIT=0
+if [[ -n "${AGENTDOCK_STATE_DIR:-}" ]]; then
+  STATE_DIR_EXPLICIT=1
+fi
 SKIP_TESTS=0
 
 usage() {
@@ -38,6 +43,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --state-dir)
       STATE_DIR="$2"
+      STATE_DIR_EXPLICIT=1
       shift 2
       ;;
     --skip-tests)
@@ -114,12 +120,14 @@ mv "${staging}" "${INSTALL_DIR}"
 rm -rf "${backup}"
 
 launcher="${BIN_DIR}/agentdock-mcp"
-cat > "${launcher}" <<EOF
-#!/usr/bin/env bash
-set -Eeuo pipefail
-export AGENTDOCK_STATE_DIR="\${AGENTDOCK_STATE_DIR:-${STATE_DIR}}"
-exec node "${INSTALL_DIR}/src/index.js" "\$@"
-EOF
+{
+  echo '#!/usr/bin/env bash'
+  echo 'set -Eeuo pipefail'
+  if [[ "${STATE_DIR_EXPLICIT}" -eq 1 ]]; then
+    printf 'export AGENTDOCK_STATE_DIR="${AGENTDOCK_STATE_DIR:-%s}"\n' "${STATE_DIR}"
+  fi
+  printf 'exec node "%s/src/index.js" "$@"\n' "${INSTALL_DIR}"
+} > "${launcher}"
 chmod 755 "${launcher}"
 
 echo

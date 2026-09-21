@@ -42,20 +42,21 @@ Authentication remains a deployment boundary rather than a hidden Core dependenc
 
 ## P0 — Distribution and operations
 
-### 3. Stable configuration schema
+### 3. Stable configuration schema — DONE
 
-Replace ad-hoc environment-only configuration with a documented schema supporting:
+Completed in v0.2-03:
 
-- state directory;
-- policy rules;
-- persisted output limits;
-- audit retention knobs;
-- transport selection;
-- HTTP bind address / port when HTTP is enabled.
-
-Environment variables remain available for deployment overrides.
-
-Configuration errors must fail closed with explicit diagnostics.
+- added versioned JSON config schema v1 at `~/.config/agentdock/config.json`;
+- added explicit `AGENTDOCK_CONFIG` file selection;
+- froze precedence as defaults < config file < environment < programmatic overrides;
+- centralized state, policy, persisted process-output limit, audit retention, transport selection and HTTP settings;
+- preserved all existing `AGENTDOCK_*` deployment overrides;
+- wired configurable process snapshot limits into StateStore;
+- wired bounded per-Task audit retention with explicit truncation metadata;
+- made `npm start` follow `transport.mode`;
+- kept `npm run start:http` as an explicit HTTP override;
+- rejected unknown fields, invalid regex/types/ports/paths, and unsafe non-loopback HTTP configuration;
+- documented the schema and environment mapping in `docs/configuration.md`.
 
 ### 4. `agentdock doctor`
 

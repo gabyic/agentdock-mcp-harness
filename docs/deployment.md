@@ -2,6 +2,8 @@
 
 AgentDock MCP Harness v0.2 development builds support both stdio and native stateless Streamable HTTP. Core authentication remains an external deployment concern.
 
+Runtime configuration is loaded from the versioned schema documented in [configuration.md](configuration.md). The default file is `~/.config/agentdock/config.json`; existing `AGENTDOCK_*` environment variables override file values.
+
 ## Local stdio
 
 After installation, the launcher is normally:
@@ -128,21 +130,28 @@ Task creation:
 
 ## Policy
 
-Policy configuration is supplied through `AGENTDOCK_POLICY_JSON` in v0.1.
+Policy rules belong in `policy.rules` in the versioned AgentDock config.
 
 Example:
 
-```bash
-export AGENTDOCK_POLICY_JSON='[
-  {
-    "id": "ask-service-restart",
-    "effect": "ask",
-    "tool": "process.start",
-    "shell_regex": "^systemctl restart ",
-    "approval_scope": "service-restart"
+```json
+{
+  "version": 1,
+  "policy": {
+    "rules": [
+      {
+        "id": "ask-service-restart",
+        "effect": "ask",
+        "tool": "process.start",
+        "shell_regex": "^systemctl restart ",
+        "approval_scope": "service-restart"
+      }
+    ]
   }
-]'
+}
 ```
+
+`AGENTDOCK_POLICY_JSON` remains supported as a higher-precedence deployment override and replaces the complete file rule array.
 
 Rules are deterministic. They do not invoke an AI model.
 

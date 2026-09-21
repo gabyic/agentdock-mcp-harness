@@ -350,7 +350,9 @@ cd agentdock-mcp-harness
 
 The installer performs a user-local installation by default and does not require root for Core.
 
-See [docs/deployment.md](docs/deployment.md) for local MCP configuration and remote deployment guidance.
+AgentDock v0.2 development builds use a versioned JSON configuration schema at `~/.config/agentdock/config.json`. Existing `AGENTDOCK_*` environment variables remain supported as higher-precedence deployment overrides.
+
+See [docs/configuration.md](docs/configuration.md) for the config schema and [docs/deployment.md](docs/deployment.md) for local MCP / remote deployment guidance.
 
 ## Development
 
@@ -385,7 +387,8 @@ v0.2 focuses on production distribution and protocol modernization rather than f
 
 - ✅ MCP 2026-07-28 / TypeScript SDK v2 migration;
 - ✅ native stateless Streamable HTTP while retaining stdio;
-- stable configuration schema and `doctor` diagnostics;
+- ✅ stable versioned configuration schema with env overrides;
+- `agentdock doctor` diagnostics;
 - installation / upgrade / uninstall lifecycle;
 - service health and restart hardening;
 - release CI, versioning and reproducible packages;

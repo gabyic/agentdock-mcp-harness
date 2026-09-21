@@ -8,10 +8,12 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { redactEnv } from "./redaction.js";
+import {
+  DEFAULT_PERSISTED_PROCESS_OUTPUT_BYTES,
+  DEFAULT_STATE_RELATIVE_PATH,
+} from "./config.js";
 
-const MAX_PERSISTED_OUTPUT_BYTES = 64 * 1024;
-
-function persistedOutput(record) {
+function persistedOutput(record, maxPersistedOutputBytes) {
   const chunks = record.output ?? [];
   let bytes = 0;
   const kept = [];
@@ -21,7 +23,7 @@ function persistedOutput(record) {
     const text = String(chunk.text ?? "");
     const size = Buffer.byteLength(text, "utf8");
 
-    if (bytes + size <= MAX_PERSISTED_OUTPUT_BYTES) {
+    if (bytes + size <= maxPersistedOutputBytes) {
       kept.push({
         cursor: chunk.cursor,
         stream: chunk.stream,
@@ -31,7 +33,7 @@ function persistedOutput(record) {
       continue;
     }
 
-    const remaining = MAX_PERSISTED_OUTPUT_BYTES - bytes;
+    const remaining = maxPersistedOutputBytes - bytes;
     if (remaining > 0) {
       const buffer = Buffer.from(text, "utf8");
       const tail = buffer.subarray(Math.max(0, buffer.length - remaining)).toString("utf8");
@@ -67,12 +69,23 @@ export class StateStore {
   #tasksDir;
   #processesDir;
   #auditsDir;
+  #maxPersistedOutputBytes;
 
-  constructor({ stateDir } = {}) {
-    this.#stateDir =
-      stateDir ??
-      process.env.AGENTDOCK_STATE_DIR ??
-      path.join(os.homedir(), ".local", "state", "agentdock");
+  constructor({
+    stateDir = path.join(os.homedir(), DEFAULT_STATE_RELATIVE_PATH),
+    maxPersistedOutputBytes = DEFAULT_PERSISTED_PROCESS_OUTPUT_BYTES,
+  } = {}) {
+    if (
+      !Number.isInteger(maxPersistedOutputBytes) ||
+      maxPersistedOutputBytes < 1024
+    ) {
+      throw new TypeError(
+        "maxPersistedOutputBytes must be an integer >= 1024.",
+      );
+    }
+
+    this.#stateDir = stateDir;
+    this.#maxPersistedOutputBytes = maxPersistedOutputBytes;
     this.#tasksDir = path.join(this.#stateDir, "tasks");
     this.#processesDir = path.join(this.#stateDir, "processes");
     this.#auditsDir = path.join(this.#stateDir, "audits");
@@ -86,6 +99,10 @@ export class StateStore {
 
   get stateDir() {
     return this.#stateDir;
+  }
+
+  get maxPersistedOutputBytes() {
+    return this.#maxPersistedOutputBytes;
   }
 
   #readJson(filePath) {
@@ -141,7 +158,10 @@ export class StateStore {
   }
 
   saveProcess(record) {
-    const outputState = persistedOutput(record);
+    const outputState = persistedOutput(
+      record,
+      this.#maxPersistedOutputBytes,
+    );
     const serializable = {
       process_id: record.process_id,
       task_id: record.task_id,

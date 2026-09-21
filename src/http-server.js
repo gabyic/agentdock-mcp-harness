@@ -6,15 +6,24 @@ import {
 } from "@modelcontextprotocol/node";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import {
+  DEFAULT_HTTP_HEALTH_PATH,
+  DEFAULT_HTTP_HOST,
+  DEFAULT_HTTP_PATH,
+  DEFAULT_HTTP_PORT,
+  LOCAL_HOSTNAMES,
+} from "./config.js";
+import {
   createAgentDockRuntime,
   createAgentDockServer,
 } from "./server.js";
 
-export const DEFAULT_HTTP_HOST = "127.0.0.1";
-export const DEFAULT_HTTP_PORT = 3100;
-export const DEFAULT_MCP_PATH = "/mcp";
-export const DEFAULT_HEALTH_PATH = "/healthz";
-export const LOCAL_HOSTNAMES = ["localhost", "127.0.0.1", "[::1]"];
+export {
+  DEFAULT_HTTP_HOST,
+  DEFAULT_HTTP_PORT,
+  LOCAL_HOSTNAMES,
+};
+export const DEFAULT_MCP_PATH = DEFAULT_HTTP_PATH;
+export const DEFAULT_HEALTH_PATH = DEFAULT_HTTP_HEALTH_PATH;
 
 function normalizePath(value, name) {
   if (typeof value !== "string" || !value.startsWith("/")) {
@@ -156,6 +165,20 @@ export function createAgentDockHttpServer({
     allowedOrigins: origins,
     close,
   };
+}
+
+export async function listenAgentDockHttpFromConfig(config) {
+  const runtime = createAgentDockRuntime({ config });
+  const http = config.transport.http;
+  return listenAgentDockHttp({
+    runtime,
+    host: http.host,
+    port: http.port,
+    mcpPath: http.path,
+    healthPath: http.health_path,
+    allowedHosts: http.allowed_hosts,
+    allowedOrigins: http.allowed_origins,
+  });
 }
 
 export async function listenAgentDockHttp({

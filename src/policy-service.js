@@ -2,25 +2,15 @@ import { AgentDockError } from "./errors.js";
 
 const EFFECTS = new Set(["allow", "ask", "deny"]);
 
-function parseRules(raw) {
-  if (!raw) {
+function parseRules(value) {
+  if (value === undefined || value === null) {
     return [];
-  }
-
-  let value;
-  try {
-    value = JSON.parse(raw);
-  } catch (error) {
-    throw new AgentDockError(
-      "INVALID_POLICY_CONFIG",
-      "AGENTDOCK_POLICY_JSON is not valid JSON: " + error.message,
-    );
   }
 
   if (!Array.isArray(value)) {
     throw new AgentDockError(
       "INVALID_POLICY_CONFIG",
-      "AGENTDOCK_POLICY_JSON must be a JSON array.",
+      "Policy rules must be an array.",
     );
   }
 
@@ -109,10 +99,19 @@ function prefixMatches(value, prefix) {
 export class PolicyService {
   #rules;
 
-  constructor({ rulesJson } = {}) {
-    this.#rules = parseRules(
-      rulesJson ?? process.env.AGENTDOCK_POLICY_JSON ?? "",
-    );
+  constructor({ rules, rulesJson } = {}) {
+    let value = rules;
+    if (value === undefined && rulesJson !== undefined) {
+      try {
+        value = rulesJson ? JSON.parse(rulesJson) : [];
+      } catch (error) {
+        throw new AgentDockError(
+          "INVALID_POLICY_CONFIG",
+          "rulesJson is not valid JSON: " + error.message,
+        );
+      }
+    }
+    this.#rules = parseRules(value);
   }
 
   evaluate({ tool, shell, argv }) {
