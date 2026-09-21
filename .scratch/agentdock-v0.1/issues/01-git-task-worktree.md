@@ -1,4 +1,5 @@
 # 01 — Create a real Git Task with isolated worktree
+Status: IMPLEMENTED
 
 Blocked by: none
 

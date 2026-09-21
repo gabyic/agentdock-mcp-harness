@@ -1,0 +1,19 @@
+{
+  "name": "agentdock",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic MCP coding harness for ChatGPT Web",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test",
+    "test:ticket01": "node --test test/ticket01.mcp.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.4.3"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
