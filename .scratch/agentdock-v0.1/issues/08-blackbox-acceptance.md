@@ -1,4 +1,5 @@
 # 08 — Automated MCP black-box v0.1 Acceptance
+Status: IMPLEMENTED
 
 Blocked by: 04, 05, 06, 07
 
