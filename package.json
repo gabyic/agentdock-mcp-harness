@@ -1,6 +1,6 @@
 {
   "name": "agentdock-mcp-harness",
-  "version": "0.2.0-dev.4",
+  "version": "0.2.0-dev.5",
   "private": true,
   "type": "module",
   "description": "Use your ChatGPT or Claude Web quota for remote coding without a second server-side API token meter",
@@ -29,6 +29,7 @@
     "start": "node src/index.js",
     "start:http": "node src/http.js",
     "doctor": "node src/cli.js doctor",
+    "release:build": "./scripts/build-release.sh",
     "test": "node --test",
     "test:ticket01": "node --test test/ticket01.mcp.test.js",
     "acceptance:v0.1": "node --test --test-reporter=spec test/ticket08.acceptance.test.js"

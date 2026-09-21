@@ -8,6 +8,8 @@ The project follows Semantic Versioning.
 
 ### Added
 
+- Managed install/upgrade/uninstall lifecycle with version manifests, downgrade protection, state-preserving uninstall defaults, and explicit destructive cleanup options.
+- Reproducible versioned release tarballs with SHA-256 checksum generation.
 - `agentdock doctor` CLI with human-readable and JSON diagnostics for runtime, Git/worktree support, configuration, state persistence, transport, policy, OS user and optional sudo.
 - Versioned JSON configuration schema v1 with `~/.config/agentdock/config.json` discovery and `AGENTDOCK_CONFIG` override.
 - Configurable persisted process-output bounds and bounded per-Task audit retention with truncation metadata.

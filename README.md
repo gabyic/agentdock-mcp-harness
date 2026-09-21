@@ -366,7 +366,22 @@ agentdock doctor --json
 
 Doctor checks Node, Git/worktrees, the effective configuration, state-directory writability, transport, policy, OS user and optional passwordless sudo without printing credential values.
 
-See [docs/configuration.md](docs/configuration.md), [docs/doctor.md](docs/doctor.md), and [docs/deployment.md](docs/deployment.md).
+Managed installs support explicit lifecycle commands:
+
+```bash
+agentdock upgrade --source /path/to/new-agentdock
+agentdock uninstall
+```
+
+Ordinary uninstall preserves durable state and config. Destructive cleanup requires explicit `--remove-state` / `--remove-config`.
+
+Build a reproducible release archive from a clean Git checkout with:
+
+```bash
+npm run release:build
+```
+
+See [docs/configuration.md](docs/configuration.md), [docs/doctor.md](docs/doctor.md), [docs/lifecycle.md](docs/lifecycle.md), and [docs/deployment.md](docs/deployment.md).
 
 ## Development
 
@@ -403,7 +418,7 @@ v0.2 focuses on production distribution and protocol modernization rather than f
 - ✅ native stateless Streamable HTTP while retaining stdio;
 - ✅ stable versioned configuration schema with env overrides;
 - ✅ `agentdock doctor` diagnostics;
-- installation / upgrade / uninstall lifecycle;
+- ✅ managed install / upgrade / uninstall lifecycle;
 - service health and restart hardening;
 - release CI, versioning and reproducible packages;
 - documentation for remote ChatGPT deployment.

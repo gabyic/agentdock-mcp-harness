@@ -39,3 +39,9 @@ jobs:
 
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high
+
+      - name: Build reproducible release artifact
+        run: npm run release:build
+
+      - name: Verify release checksum
+        run: cd dist && sha256sum -c *.sha256

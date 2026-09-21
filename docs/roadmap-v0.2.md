@@ -74,17 +74,23 @@ Completed in v0.2-04:
 - avoids printing policy bodies, environment values, tokens, passwords or API credentials;
 - added machine-readable JSON output and dedicated black-box CLI coverage.
 
-### 5. Install / upgrade / uninstall lifecycle
+### 5. Install / upgrade / uninstall lifecycle — DONE
 
-Provide:
+Completed in v0.2-05:
 
-- user-local install;
-- versioned upgrade path;
-- uninstall that leaves Task state alone by default;
-- explicit state removal option;
-- reproducible release artifacts.
+- installation now works from either a Git checkout or an extracted release archive;
+- managed installs write a non-secret `.agentdock-install.json` manifest;
+- `agentdock upgrade --source PATH` upgrades only from an explicitly supplied local checkout/release;
+- semantic-version comparison prevents accidental downgrade unless `--allow-downgrade` is explicit;
+- upgrade preserves state/config and atomically swaps program files;
+- `agentdock uninstall` removes managed program files/launchers while preserving state/config by default;
+- `--remove-state` and `--remove-config` are explicit destructive options with unsafe-path guards;
+- unmanaged source checkouts refuse lifecycle mutation;
+- `npm run release:build` creates deterministic versioned `.tar.gz` artifacts plus SHA-256 checksums;
+- repeated builds from the same Git commit are byte-identical;
+- release archives install successfully without `.git` metadata.
 
-The installation path must not silently expose AgentDock to the network.
+The installation path does not configure or expose network services.
 
 ### 6. Service lifecycle hardening
 
