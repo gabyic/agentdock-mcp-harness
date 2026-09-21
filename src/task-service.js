@@ -33,6 +33,12 @@ export class TaskService {
     return task;
   }
 
+  save(task) {
+    this.#tasks.set(task.task_id, task);
+    this.#store.saveTask(task);
+    return task;
+  }
+
   resume(taskId) {
     const task = this.get(taskId);
     if (!existsSync(task.worktree_path)) {
@@ -80,6 +86,8 @@ export class TaskService {
       source_dirty: source.source_dirty,
       uncommitted_changes_not_included: source.source_dirty,
       process_ids: [],
+      approvals: [],
+      approval_grants: [],
       created_at: now,
       updated_at: now,
     };

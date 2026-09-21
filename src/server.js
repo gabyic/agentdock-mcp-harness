@@ -1,9 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { AgentDockError } from "./errors.js";
+import { ApprovalService } from "./approval-service.js";
 import { FileEditService } from "./file-edit-service.js";
 import { FileQueryService } from "./file-query-service.js";
 import { GitService } from "./git-service.js";
+import { PolicyService } from "./policy-service.js";
 import { ProcessService } from "./process-service.js";
 import { StateStore } from "./state-store.js";
 import { TaskService } from "./task-service.js";
@@ -53,9 +55,15 @@ export function createAgentDockServer({ stateDir } = {}) {
   const stateStore = new StateStore({ stateDir });
   const gitService = new GitService();
   const taskService = new TaskService({ gitService, stateStore });
+  const policyService = new PolicyService();
+  const approvalService = new ApprovalService({ taskService, policyService });
   const fileQueryService = new FileQueryService({ taskService });
   const fileEditService = new FileEditService({ taskService });
-  const processService = new ProcessService({ taskService, stateStore });
+  const processService = new ProcessService({
+    taskService,
+    stateStore,
+    approvalService,
+  });
 
   const server = new McpServer(
     { name: "AgentDock", version: "0.1.0" },
@@ -196,6 +204,46 @@ export function createAgentDockServer({ stateDir } = {}) {
     }),
   );
 
+
+  server.tool(
+    "approval.get",
+    "Return a durable approval request by Task and approval_id.",
+    {
+      task_id: z.string().min(1),
+      approval_id: z.string().min(1),
+    },
+    { readOnlyHint: true },
+    safe(async ({ task_id, approval_id }) =>
+      toolResult(
+        approvalService.get({
+          taskId: task_id,
+          approvalId: approval_id,
+        }),
+      )),
+  );
+
+  server.tool(
+    "approval.respond",
+    "Resolve or escalate a durable approval request.",
+    {
+      task_id: z.string().min(1),
+      approval_id: z.string().min(1),
+      decision: z.enum([
+        "ALLOW_ONCE",
+        "ALLOW_TASK",
+        "DENY",
+        "ASK_USER",
+      ]),
+    },
+    safe(async ({ task_id, approval_id, decision }) =>
+      toolResult(
+        approvalService.respond({
+          taskId: task_id,
+          approvalId: approval_id,
+          decision,
+        }),
+      )),
+  );
 
   server.tool(
     "process.start",

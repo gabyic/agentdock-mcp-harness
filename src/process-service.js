@@ -6,11 +6,13 @@ import { resolveExistingTaskPath } from "./workspace-paths.js";
 export class ProcessService {
   #tasks;
   #store;
+  #approval;
   #processes = new Map();
 
-  constructor({ taskService, stateStore }) {
+  constructor({ taskService, stateStore, approvalService }) {
     this.#tasks = taskService;
     this.#store = stateStore;
+    this.#approval = approvalService;
   }
 
   #restore(processId) {
@@ -120,6 +122,15 @@ export class ProcessService {
       taskId,
       cwd,
     );
+
+    this.#approval?.authorize({
+      taskId,
+      tool: "process.start",
+      shell,
+      argv,
+      cwd: resolved,
+      env,
+    });
 
     const processId = "proc_" + randomUUID();
     const mode = hasArgv ? "argv" : "shell";

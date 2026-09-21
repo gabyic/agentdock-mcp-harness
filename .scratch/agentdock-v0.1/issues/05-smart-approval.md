@@ -1,4 +1,5 @@
 # 05 — Task-scoped Smart Approval round-trip
+Status: IMPLEMENTED
 
 Blocked by: 04
 
