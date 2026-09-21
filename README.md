@@ -1,6 +1,12 @@
 # AgentDock MCP Harness
 
+> **无限流 / Infinite Coding Flow**
+>
+> **把 ChatGPT / Claude 网页版的大额度、近似无限配额，变成你的远程 Coding Token 池。**
+>
 > **Use your ChatGPT / Claude Web quota as a remote coding agent — no second API token meter.**
+
+如果你的 ChatGPT / Claude 网页套餐本身提供大额度或近似无限的使用量，AgentDock 就能让这部分现有配额直接驱动你自己 Linux 服务器上的真实开发流程，而不是再额外购买一套 Coding Agent API Token。
 
 If your chat plan gives you high or near-unlimited usage, AgentDock lets that same chat-model quota drive real remote software engineering on your own Linux server.
 
