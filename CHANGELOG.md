@@ -6,8 +6,12 @@ The project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.2.0-rc.1] - 2026-09-22
+
 ### Added
 
+- Unified release gate covering version/metadata consistency, full tests, v0.1 acceptance, production dependency audit, systemd contract verification, reproducible artifacts, extracted-install smoke testing and health/graceful-shutdown validation.
+- Tag-driven GitHub Release workflow that verifies the tag/version pair and publishes signed-off release artifacts plus SHA-256 checksums without publishing to npm.
 - Hardened service lifecycle with graceful owned-Process shutdown, health probing/retry, systemd `Restart=always` + `KillMode=control-group` contract, and restart/crash recovery tests.
 - `agentdock health` CLI for local/explicit HTTP health checks and startup readiness gates.
 - Managed install/upgrade/uninstall lifecycle with version manifests, downgrade protection, state-preserving uninstall defaults, and explicit destructive cleanup options.

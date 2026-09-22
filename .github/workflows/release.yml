@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Run release gate
+        run: ./scripts/release-gate.sh "$GITHUB_REF_NAME"
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="$(node -p "require('./package.json').version")"
+          notes="docs/releases/${GITHUB_REF_NAME}.md"
+          test -f "$notes"
+          if [[ "$version" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          NOTES: ${{ steps.meta.outputs.notes }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          shopt -s nullglob
+          assets=(dist/*)
+          test "${#assets[@]}" -gt 0
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --clobber
+            if [[ "$PRERELEASE" == "true" ]]; then
+              gh release edit "$TAG"                 --title "AgentDock MCP Harness $TAG"                 --notes-file "$NOTES"                 --prerelease
+            else
+              gh release edit "$TAG"                 --title "AgentDock MCP Harness $TAG"                 --notes-file "$NOTES"                 --latest
+            fi
+          else
+            args=(
+              "$TAG"
+              "${assets[@]}"
+              --verify-tag
+              --title "AgentDock MCP Harness $TAG"
+              --notes-file "$NOTES"
+            )
+            if [[ "$PRERELEASE" == "true" ]]; then
+              args+=(--prerelease)
+            else
+              args+=(--latest)
+            fi
+            gh release create "${args[@]}"
+          fi

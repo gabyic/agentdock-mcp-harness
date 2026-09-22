@@ -62,7 +62,7 @@ test("v0.2-04: doctor reports deterministic core diagnostics without requiring s
   });
 
   assert.notEqual(report.overall_status, "FAIL");
-  assert.equal(report.agentdock_version, "0.2.0-dev.6");
+  assert.equal(report.agentdock_version, "0.2.0-rc.1");
 
   const checks = new Map(
     report.checks.map((entry) => [entry.id, entry]),
@@ -94,7 +94,7 @@ test("v0.2-04: doctor reports deterministic core diagnostics without requiring s
   const text = formatDoctorReport(report);
   assert.equal(serialized.includes(secret), false);
   assert.equal(text.includes(secret), false);
-  assert.match(text, /AgentDock Doctor 0\.2\.0-dev\.6/);
+  assert.match(text, /AgentDock Doctor 0\.2\.0-rc\.1/);
   assert.match(text, /\[PASS\] git_worktree/);
 });
 
@@ -146,7 +146,7 @@ test("v0.2-04: doctor CLI emits parseable JSON and exits zero for warnings", asy
   assert.equal(stderr, "");
   const report = JSON.parse(stdout);
   assert.notEqual(report.overall_status, "FAIL");
-  assert.equal(report.agentdock_version, "0.2.0-dev.6");
+  assert.equal(report.agentdock_version, "0.2.0-rc.1");
   assert.equal(stdout.includes(secret), false);
 
   const configCheck = report.checks.find(

@@ -109,27 +109,36 @@ This closes the clean-SIGTERM restart failure discovered during the v0.1 live ac
 
 ## P0 — Open-source release engineering
 
-### 7. CI
+### 7. CI — DONE
 
-Required CI gates:
+The v0.2 release line now gates:
 
-- Node 24;
-- `npm ci`;
+- Node.js 24;
+- clean `npm ci`;
 - full MCP black-box test suite;
 - v0.1 acceptance scenario;
-- dependency audit;
-- basic package metadata validation.
+- production dependency audit;
+- systemd service contract verification;
+- package/lock/runtime-version and metadata consistency;
+- reproducible release artifact construction;
+- SHA-256 verification;
+- extracted-archive install/doctor/health/graceful-shutdown smoke.
 
-### 8. Versioning and release
+The same release-critical checks are composed into `npm run release:gate`.
 
-Adopt SemVer and tagged GitHub releases.
+### 8. Versioning and release — RC STAGE COMPLETE
 
-Initial public sequence:
+The release pipeline uses SemVer and tag-driven GitHub Releases.
+
+Public sequence:
 
 - `v0.1.0`: proven Linux Core;
-- `v0.2.0`: productionized MCP v2 / HTTP release.
+- `v0.2.0-rc.1`: first frozen productionization release candidate;
+- `v0.2.0`: stable promotion after RC validation and no unresolved release blocker.
 
-Do not publish an npm package until the package name and CLI surface are stable.
+Tag/version consistency is enforced, every tagged release requires a dated CHANGELOG entry and tag-specific release notes, and GitHub Release assets are rebuilt from the tagged commit.
+
+npm publication remains disabled with `private: true` until the package name and npm distribution policy are explicitly approved.
 
 ## P1 — Operator usability
 

@@ -388,7 +388,7 @@ Build a reproducible release archive from a clean Git checkout with:
 npm run release:build
 ```
 
-See [docs/configuration.md](docs/configuration.md), [docs/doctor.md](docs/doctor.md), [docs/lifecycle.md](docs/lifecycle.md), [docs/service-lifecycle.md](docs/service-lifecycle.md), and [docs/deployment.md](docs/deployment.md).
+See [docs/configuration.md](docs/configuration.md), [docs/doctor.md](docs/doctor.md), [docs/lifecycle.md](docs/lifecycle.md), [docs/service-lifecycle.md](docs/service-lifecycle.md), [docs/releasing.md](docs/releasing.md), and [docs/deployment.md](docs/deployment.md).
 
 ## Development
 
@@ -427,7 +427,7 @@ v0.2 focuses on production distribution and protocol modernization rather than f
 - ✅ `agentdock doctor` diagnostics;
 - ✅ managed install / upgrade / uninstall lifecycle;
 - ✅ service health and restart hardening;
-- release CI, versioning and reproducible packages;
+- ✅ release CI, versioning, reproducible packages and v0.2.0 RC gate;
 - documentation for remote ChatGPT deployment.
 
 See [docs/roadmap-v0.2.md](docs/roadmap-v0.2.md).

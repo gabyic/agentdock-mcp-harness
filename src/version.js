@@ -1,1 +1,1 @@
-export const AGENTDOCK_VERSION = "0.2.0-dev.6";
+export const AGENTDOCK_VERSION = "0.2.0-rc.1";

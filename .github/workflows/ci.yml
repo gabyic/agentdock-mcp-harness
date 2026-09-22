@@ -31,6 +31,9 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Verify release metadata
+        run: npm run release:verify
+
       - name: Test
         run: npm test
 
@@ -48,3 +51,6 @@ jobs:
 
       - name: Verify release checksum
         run: cd dist && sha256sum -c *.sha256
+
+      - name: Smoke release archive
+        run: npm run release:smoke
