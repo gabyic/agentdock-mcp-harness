@@ -6,6 +6,18 @@ The project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-22
+
+### Release engineering
+
+- Hardened GitHub Release publishing for immutable-release enforcement without changing AgentDock runtime behavior.
+- Future tagged releases refuse to overwrite an existing mutable release and no longer use asset clobbering.
+- Published releases are verified for GitHub `immutable: true`, exact tag-to-commit identity, and SHA-256 asset digest parity.
+- If GitHub still reports a newly published release as mutable after bounded retries, the workflow removes that failed release and its new tag instead of leaving a misleading mutable stable release behind.
+- The repository-level **Enable release immutability** setting is an explicit one-time prerequisite before publishing `v0.2.1` or any later stable tag.
+- No v0.3 Guided Development, skill, or workflow functionality is included in this patch line.
+
+
 ## [0.2.0] - 2026-09-22
 
 ### Stable promotion
