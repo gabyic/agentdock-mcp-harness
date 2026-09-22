@@ -6,6 +6,8 @@ The project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.3.0-dev.1] - 2026-09-22
+
 ### Added
 
 - v0.3 Guided Development preview: Git-backed server-side Skill resources (`skill.install/update/list/search/read`) and durable project workflow guidance (`workflow.start/list/update/guide/advance`) for chat surfaces that cannot invoke installed Skills natively.
