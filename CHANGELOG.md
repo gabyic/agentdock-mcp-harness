@@ -6,6 +6,13 @@ The project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-22
+
+### Stable promotion
+
+- Promoted the validated `v0.2.0-rc.1` productionization line to stable after green main CI, green release gate, verified release archive/checksum, installed production health checks, and restart smoke evidence.
+- No v0.3 Guided Development functionality is included in this stable release.
+
 ## [0.2.0-rc.1] - 2026-09-22
 
 ### Added
