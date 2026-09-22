@@ -146,6 +146,8 @@ test("v0.2-07: tag workflow is gated and publishes GitHub assets as prerelease",
   );
 
   assert.match(workflow, /tags:\s*\n\s*- "v\*"/);
+  assert.match(workflow, /actions\/checkout@v7/);
+  assert.match(workflow, /actions\/setup-node@v7/);
   assert.match(workflow, /contents: write/);
   assert.match(
     workflow,
@@ -156,6 +158,20 @@ test("v0.2-07: tag workflow is gated and publishes GitHub assets as prerelease",
   assert.match(workflow, /gh release upload/);
   assert.match(workflow, /--verify-tag/);
   assert.match(workflow, /--prerelease/);
+
+  const ci = await readFile(
+    path.join(
+      projectRoot,
+      ".github",
+      "workflows",
+      "ci.yml",
+    ),
+    "utf8",
+  );
+  assert.match(ci, /actions\/checkout@v7/);
+  assert.match(ci, /actions\/setup-node@v7/);
+  assert.match(ci, /npm run release:verify/);
+  assert.match(ci, /npm run release:smoke/);
 
   const notes = await readFile(
     path.join(
