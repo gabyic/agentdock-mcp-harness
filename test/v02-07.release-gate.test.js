@@ -19,6 +19,10 @@ const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+const releaseVersion = JSON.parse(
+  await readFile(path.join(projectRoot, "package.json"), "utf8"),
+).version;
+const releaseTag = "v" + releaseVersion;
 
 async function run(command, args, options = {}) {
   return execFileAsync(command, args, {
@@ -29,21 +33,21 @@ async function run(command, args, options = {}) {
   });
 }
 
-test("v0.2-07: release metadata verifier accepts the RC and its exact tag", async () => {
+test("v0.2-07: release metadata verifier accepts the current version and exact tag", async () => {
   const { stdout, stderr } = await run(
     process.execPath,
     [
       "scripts/verify-release.mjs",
       "--tag",
-      "v0.2.0-rc.1",
+      releaseTag,
     ],
   );
   assert.equal(stderr, "");
   const result = JSON.parse(stdout);
   assert.equal(result.status, "PASS");
-  assert.equal(result.version, "0.2.0-rc.1");
-  assert.equal(result.expected_tag, "v0.2.0-rc.1");
-  assert.equal(result.tag, "v0.2.0-rc.1");
+  assert.equal(result.version, releaseVersion);
+  assert.equal(result.expected_tag, releaseTag);
+  assert.equal(result.tag, releaseTag);
   assert.equal(result.npm_publishable, false);
   assert.equal(result.node_engine, ">=24");
   assert.equal(result.license, "MIT");
@@ -57,7 +61,7 @@ test("v0.2-07: release verifier fails closed on tag mismatch", async () => {
       [
         "scripts/verify-release.mjs",
         "--tag",
-        "v0.2.0",
+        "v9.9.9",
       ],
     );
   } catch (error) {
@@ -67,7 +71,7 @@ test("v0.2-07: release verifier fails closed on tag mismatch", async () => {
   assert.ok(caught);
   assert.equal(caught.code, 1);
   assert.match(caught.stderr, /tag\/version mismatch/);
-  assert.match(caught.stderr, /v0\.2\.0-rc\.1/);
+  assert.equal(caught.stderr.includes(releaseTag), true);
 });
 
 test("v0.2-07: release verifier detects package-lock version drift", async (t) => {
@@ -122,7 +126,7 @@ test("v0.2-07: release verifier detects package-lock version drift", async (t) =
         "--root",
         root,
         "--tag",
-        "v0.2.0-rc.1",
+        releaseTag,
       ],
     );
   } catch (error) {
@@ -134,7 +138,7 @@ test("v0.2-07: release verifier detects package-lock version drift", async (t) =
   assert.match(caught.stderr, /package-lock version mismatch/);
 });
 
-test("v0.2-07: tag workflow is gated and publishes GitHub assets as prerelease", async () => {
+test("v0.2-07: tag workflow is gated and derives stable/prerelease publication from SemVer", async () => {
   const workflow = await readFile(
     path.join(
       projectRoot,
@@ -158,6 +162,7 @@ test("v0.2-07: tag workflow is gated and publishes GitHub assets as prerelease",
   assert.match(workflow, /gh release upload/);
   assert.match(workflow, /--verify-tag/);
   assert.match(workflow, /--prerelease/);
+  assert.match(workflow, /--latest/);
 
   const ci = await readFile(
     path.join(
@@ -178,11 +183,10 @@ test("v0.2-07: tag workflow is gated and publishes GitHub assets as prerelease",
       projectRoot,
       "docs",
       "releases",
-      "v0.2.0-rc.1.md",
+      releaseTag + ".md",
     ),
     "utf8",
   );
-  assert.match(notes, /v0\.2\.0-rc\.1/);
+  assert.equal(notes.includes(releaseTag), true);
   assert.match(notes, /npm publication remains disabled/i);
-  assert.match(notes, /Stable v0\.2\.0 promotion/);
 });

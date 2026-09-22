@@ -18,6 +18,9 @@ const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+const releaseVersion = JSON.parse(
+  await readFile(path.join(projectRoot, "package.json"), "utf8"),
+).version;
 
 async function run(command, args, options = {}) {
   return execFileAsync(command, args, {
@@ -66,7 +69,7 @@ test("v0.2-05: release artifacts are reproducible and install without .git", asy
   assert.match(first.stdout, /ARTIFACT=/);
   assert.match(second.stdout, /ARTIFACT=/);
 
-  const name = "agentdock-mcp-harness-v0.2.0-rc.1.tar.gz";
+  const name = "agentdock-mcp-harness-v" + releaseVersion + ".tar.gz";
   const tgz1 = path.join(out1, name);
   const tgz2 = path.join(out2, name);
   const sha1 = (
@@ -82,7 +85,7 @@ test("v0.2-05: release artifacts are reproducible and install without .git", asy
   await run("sha256sum", ["-c", name + ".sha256"], { cwd: out1 });
 
   const listing = (await run("tar", ["-tzf", tgz1])).stdout;
-  const prefix = "agentdock-mcp-harness-0.2.0-rc.1/";
+  const prefix = "agentdock-mcp-harness-" + releaseVersion + "/";
   for (const expected of [
     prefix + "package.json",
     prefix + "scripts/install.sh",
@@ -103,7 +106,7 @@ test("v0.2-05: release artifacts are reproducible and install without .git", asy
 
   const extracted = path.join(
     extract,
-    "agentdock-mcp-harness-0.2.0-rc.1",
+    "agentdock-mcp-harness-" + releaseVersion,
   );
   assert.equal(
     await run("sh", ["-c", "test ! -e .git"], { cwd: extracted })
@@ -168,7 +171,7 @@ test("v0.2-05: release artifacts are reproducible and install without .git", asy
     ["version"],
     { env },
   );
-  assert.equal(version.stdout.trim(), "0.2.0-rc.1");
+  assert.equal(version.stdout.trim(), releaseVersion);
 
   const doctor = await run(
     path.join(binDir, "agentdock"),
