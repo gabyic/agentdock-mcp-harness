@@ -6,6 +6,11 @@ The project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- v0.3 Guided Development preview: Git-backed server-side Skill resources (`skill.install/update/list/search/read`) and durable project workflow guidance (`workflow.start/list/update/guide/advance`) for chat surfaces that cannot invoke installed Skills natively.
+- Matt Pocock engineering-flow compatibility with first-use setup, grilling, wayfinding, prototype detours, spec/ticket routing, implementation/review boundaries, source commit evidence, cross-chat recovery, and fail-closed unresolved-decision guards.
+
 ## [0.2.0-rc.1] - 2026-09-22
 
 ### Added
