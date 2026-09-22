@@ -44,7 +44,13 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "notes=$notes" >> "$GITHUB_OUTPUT"
 
-      - name: Create or update GitHub Release
+      # Repository prerequisite (one-time admin setting):
+      # Settings > Releases > Enable release immutability.
+      # GITHUB_TOKEN intentionally cannot preflight the repository setting because
+      # GitHub requires Administration:read for that endpoint. Publication is
+      # therefore fail-closed by verifying the resulting release below.
+
+      - name: Create or verify GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -59,12 +65,12 @@ jobs:
           test "${#assets[@]}" -gt 0
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "${assets[@]}" --clobber
-            if [[ "$PRERELEASE" == "true" ]]; then
-              gh release edit "$TAG"                 --title "AgentDock MCP Harness $TAG"                 --notes-file "$NOTES"                 --prerelease
-            else
-              gh release edit "$TAG"                 --title "AgentDock MCP Harness $TAG"                 --notes-file "$NOTES"                 --latest
+            immutable="$(gh release view "$TAG" --json isImmutable --jq '.isImmutable')"
+            if [[ "$immutable" != "true" ]]; then
+              echo "RELEASE_FAIL: existing release $TAG is mutable; refusing to overwrite assets or metadata." >&2
+              exit 1
             fi
+            echo "Existing immutable release $TAG found; skipping mutation."
           else
             args=(
               "$TAG"
@@ -80,3 +86,49 @@ jobs:
             fi
             gh release create "${args[@]}"
           fi
+
+      - name: Verify immutable published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          release_json="$(
+            gh api               -H "X-GitHub-Api-Version: 2026-03-10"               "/repos/$GITHUB_REPOSITORY/releases/tags/$TAG"
+          )"
+
+          immutable="$(jq -r '.immutable // false' <<<"$release_json")"
+          if [[ "$immutable" != "true" ]]; then
+            echo "RELEASE_FAIL: published release $TAG is not immutable." >&2
+            exit 1
+          fi
+
+          release_tag="$(jq -r '.tag_name' <<<"$release_json")"
+          if [[ "$release_tag" != "$TAG" ]]; then
+            echo "RELEASE_FAIL: release tag mismatch: expected=$TAG actual=$release_tag" >&2
+            exit 1
+          fi
+
+          tagged_commit="$(git rev-parse "$TAG^{}")"
+          if [[ "$tagged_commit" != "$GITHUB_SHA" ]]; then
+            echo "RELEASE_FAIL: tag commit mismatch: expected=$GITHUB_SHA actual=$tagged_commit" >&2
+            exit 1
+          fi
+
+          artifact="dist/agentdock-mcp-harness-v$VERSION.tar.gz"
+          checksum="$artifact.sha256"
+          for local_file in "$artifact" "$checksum"; do
+            name="$(basename -- "$local_file")"
+            local_digest="sha256:$(sha256sum "$local_file" | awk '{print $1}')"
+            remote_digest="$(
+              jq -r --arg name "$name"                 '.assets[] | select(.name == $name) | .digest // empty'                 <<<"$release_json"
+            )"
+            if [[ -z "$remote_digest" || "$remote_digest" != "$local_digest" ]]; then
+              echo "RELEASE_FAIL: asset digest mismatch for $name: expected=$local_digest actual=${remote_digest:-missing}" >&2
+              exit 1
+            fi
+          done
+
+          echo "RELEASE_IMMUTABILITY_VERIFY=PASS"
