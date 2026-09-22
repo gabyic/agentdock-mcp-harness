@@ -9,8 +9,10 @@ import { FileQueryService } from "./file-query-service.js";
 import { GitService } from "./git-service.js";
 import { PolicyService } from "./policy-service.js";
 import { ProcessService } from "./process-service.js";
+import { SkillService } from "./skill-service.js";
 import { StateStore } from "./state-store.js";
 import { TaskService } from "./task-service.js";
+import { WorkflowService } from "./workflow-service.js";
 import { AGENTDOCK_VERSION } from "./version.js";
 
 function toolResult(data) {
@@ -117,6 +119,11 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     approvalService,
     auditService,
   });
+  const skillService = new SkillService({ stateStore });
+  const workflowService = new WorkflowService({
+    stateStore,
+    skillService,
+  });
 
   return {
     stateStore,
@@ -128,6 +135,8 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     fileQueryService,
     fileEditService,
     processService,
+    skillService,
+    workflowService,
     config: resolvedConfig,
   };
 }
@@ -143,6 +152,8 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     fileQueryService,
     fileEditService,
     processService,
+    skillService,
+    workflowService,
   } = services;
 
   const server = new McpServer(
@@ -564,6 +575,232 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     safe(async ({ task_id, process_id }) =>
       toolResult(
         processService.cancel({ taskId: task_id, processId: process_id }),
+      )),
+  );
+
+
+  registerTool(
+    server,
+    "skill.list",
+    "List installed server-side skills without invoking or executing them.",
+    {
+      source_id: z.string().optional(),
+    },
+    { readOnlyHint: true },
+    safe(async ({ source_id }) =>
+      toolResult(await skillService.list({ sourceId: source_id })),
+    ),
+  );
+
+  registerTool(
+    server,
+    "skill.search",
+    "Search installed server-side skills by name, category, and description.",
+    {
+      query: z.string().min(1),
+      source_id: z.string().optional(),
+      limit: z.number().int().min(1).max(50).optional(),
+    },
+    { readOnlyHint: true },
+    safe(async ({ query, source_id, limit }) =>
+      toolResult(
+        await skillService.search({
+          query,
+          sourceId: source_id,
+          limit,
+        }),
+      )),
+  );
+
+  registerTool(
+    server,
+    "skill.read",
+    "Read the recommended installed SKILL.md or one of its supporting files. Follow the returned instructions in the chat model; if they reference another skill or local resource, read that resource explicitly instead of treating skills as executable server code.",
+    {
+      skill_name: z.string().min(1),
+      source_id: z.string().optional(),
+      resource_path: z.string().optional(),
+    },
+    { readOnlyHint: true },
+    safe(async ({ skill_name, source_id, resource_path }) =>
+      toolResult(
+        await skillService.read({
+          skillName: skill_name,
+          sourceId: source_id,
+          resourcePath: resource_path,
+        }),
+      )),
+  );
+
+  registerTool(
+    server,
+    "skill.install",
+    "Install a Git-backed skill source into AgentDock state. This stores instructions only; it does not execute a skill or run an LLM.",
+    {
+      source_id: z.string().min(1),
+      repo_url: z.string().min(1),
+      ref: z.string().min(1).optional(),
+      replace: z.boolean().optional(),
+    },
+    safe(async ({ source_id, repo_url, ref, replace }) =>
+      toolResult(
+        await skillService.install({
+          sourceId: source_id,
+          repoUrl: repo_url,
+          ref,
+          replace,
+        }),
+      )),
+  );
+
+  registerTool(
+    server,
+    "skill.update",
+    "Reinstall an existing skill source from its recorded Git URL/ref and report whether the source commit changed.",
+    {
+      source_id: z.string().min(1),
+    },
+    safe(async ({ source_id }) =>
+      toolResult(await skillService.update({ sourceId: source_id })),
+    ),
+  );
+
+  registerTool(
+    server,
+    "workflow.start",
+    "Start durable guided-development state for a new software goal. Use this when the user wants development guidance or does not know the next step; classify session_span and route_clarity from the conversation/repository. Existing state is protected unless replace=true, and first-use setup plus deterministic routing are enforced.",
+    {
+      repo_path: z.string().min(1),
+      goal: z.string().min(1),
+      session_span: z.enum(["single", "multi", "unknown"]).optional(),
+      route_clarity: z.enum(["clear", "foggy", "unknown"]).optional(),
+      decisions_settled: z.boolean().optional(),
+      replace: z.boolean().optional(),
+    },
+    safe(async ({
+      repo_path,
+      goal,
+      session_span,
+      route_clarity,
+      decisions_settled,
+      replace,
+    }) =>
+      toolResult(
+        await workflowService.start({
+          repoPath: repo_path,
+          goal,
+          sessionSpan: session_span,
+          routeClarity: route_clarity,
+          decisionsSettled: decisions_settled,
+          replace,
+        }),
+      )),
+  );
+
+  registerTool(
+    server,
+    "workflow.list",
+    "List durable guided-development workflows so the assistant can recover active projects across chats before asking the user to repeat context.",
+    {
+      include_done: z.boolean().optional(),
+    },
+    { readOnlyHint: true },
+    safe(async ({ include_done }) =>
+      toolResult(
+        await workflowService.list({
+          includeDone: include_done,
+        }),
+      ),
+    ),
+  );
+
+  registerTool(
+    server,
+    "workflow.update",
+    "Persist progress inside the current guided-development phase without crossing a phase boundary. Use it to keep open decisions, routing observations, and artifact paths durable across chats.",
+    {
+      repo_path: z.string().min(1),
+      session_span: z.enum(["single", "multi", "unknown"]).optional(),
+      route_clarity: z.enum(["clear", "foggy", "unknown"]).optional(),
+      open_decisions: z.array(z.string()).optional(),
+      artifacts: z.record(z.string(), z.string()).optional(),
+      note: z.string().optional(),
+    },
+    safe(async ({
+      repo_path,
+      session_span,
+      route_clarity,
+      open_decisions,
+      artifacts,
+      note,
+    }) =>
+      toolResult(
+        await workflowService.update({
+          repoPath: repo_path,
+          sessionSpan: session_span,
+          routeClarity: route_clarity,
+          openDecisions: open_decisions,
+          artifacts,
+          note,
+        }),
+      )),
+  );
+
+  registerTool(
+    server,
+    "workflow.guide",
+    "Read durable guided-development state and recommend the next workflow skill without executing it. Use this whenever the user says continue, asks what to do next, or says they do not know the next development step; then read the recommended skill and follow it in the chat model.",
+    {
+      repo_path: z.string().min(1),
+    },
+    { readOnlyHint: true },
+    safe(async ({ repo_path }) =>
+      toolResult(await workflowService.guide({ repoPath: repo_path })),
+    ),
+  );
+
+  registerTool(
+    server,
+    "workflow.advance",
+    "Advance guided-development state only after the recommended skill has actually reached an explicit phase boundary. Never use this to skip unresolved decisions; invalid jumps fail closed and the durable history records the transition.",
+    {
+      repo_path: z.string().min(1),
+      event: z.enum([
+        "setup_complete",
+        "grilling_complete",
+        "prototype_needed",
+        "prototype_complete",
+        "map_clear",
+        "spec_complete",
+        "tickets_complete",
+        "implementation_complete",
+        "review_passed",
+        "review_changes_requested",
+        "blocked",
+        "resume",
+      ]),
+      session_span: z.enum(["single", "multi", "unknown"]).optional(),
+      route_clarity: z.enum(["clear", "foggy", "unknown"]).optional(),
+      open_decisions: z.array(z.string()).optional(),
+      note: z.string().optional(),
+    },
+    safe(async ({
+      repo_path,
+      event,
+      session_span,
+      route_clarity,
+      open_decisions,
+      note,
+    }) =>
+      toolResult(
+        await workflowService.advance({
+          repoPath: repo_path,
+          event,
+          sessionSpan: session_span,
+          routeClarity: route_clarity,
+          openDecisions: open_decisions,
+          note,
+        }),
       )),
   );
 

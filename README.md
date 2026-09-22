@@ -432,6 +432,21 @@ v0.2 focuses on production distribution and protocol modernization rather than f
 
 See [docs/roadmap-v0.2.md](docs/roadmap-v0.2.md).
 
+The v0.3 development line adds **Guided Development** for users who want the
+chat model to keep track of the software-engineering process as well as execute
+it:
+
+- Git-backed server-side skill resources that remain plain instructions;
+- deterministic `skill.list/search/read/install/update` MCP tools;
+- durable per-repository workflow state with `workflow.list`, `workflow.update`,
+  and a `workflow.guide` "what next?" surface;
+- compatibility with Matt Pocock's engineering skills flow, including first-use
+  setup, grilling, wayfinding, specs, tickets, implementation and review;
+- no server-side LLM and no `skill.execute` agent runtime.
+
+See [docs/guided-development.md](docs/guided-development.md) and
+[docs/roadmap-v0.3.md](docs/roadmap-v0.3.md).
+
 ## Non-goals for v0.2
 
 These remain deliberately deferred:
