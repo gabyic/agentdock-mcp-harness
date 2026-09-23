@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
   mkdir,
@@ -91,6 +92,53 @@ async function configureMattProject(project) {
     path.join(project, "AGENTS.md"),
     "# Agent instructions\n\n## Agent skills\n\nConfigured for tests.\n",
   );
+}
+
+async function completeWorkflowWithEvidence(runtime, project) {
+  const repo = path.resolve(project);
+  const now = new Date().toISOString();
+  const taskId = "task_" + randomUUID();
+  runtime.stateStore.saveTask({
+    task_id: taskId,
+    status: "COMPLETED",
+    source_repo: repo,
+    base_head: "0".repeat(40),
+    worktree_path: path.join(repo, ".fixture-worktree", taskId),
+    process_ids: [],
+    approvals: [],
+    approval_grants: [],
+    outcome: "NO_CHANGE",
+    outcome_reason: "Workflow routing fixture required no source-code change.",
+    final_commit_sha: null,
+    retention_ref: null,
+    workspace_cleaned: false,
+    created_at: now,
+    updated_at: now,
+  });
+
+  await runtime.workflowService.update({
+    repoPath: project,
+    implementationTaskIds: [taskId],
+  });
+  let guided = await runtime.workflowService.advance({
+    repoPath: project,
+    event: "implementation_complete",
+  });
+  const fingerprint = guided.workflow.implementation_evidence.fingerprint;
+  await runtime.workflowService.update({
+    repoPath: project,
+    reviewEvidence: {
+      target_fingerprint: fingerprint,
+      standards: { result: "PASS", blocking_findings: 0 },
+      spec: { result: "PASS", blocking_findings: 0 },
+      note: "Fixture review passed both axes.",
+    },
+  });
+  guided = await runtime.workflowService.advance({
+    repoPath: project,
+    event: "review_passed",
+  });
+  return guided;
 }
 
 test("v0.3-01: skill resource layer installs, searches and reads Git-backed skills without executing them", async (t) => {
@@ -307,16 +355,7 @@ test("v0.3-02: guided workflow follows Matt-style single-session, multi-session 
     /use \/code-review.*implementation_complete/i,
   );
 
-  guided = await runtime.workflowService.advance({
-    repoPath: project,
-    event: "implementation_complete",
-  });
-  assert.equal(guided.workflow.phase, "REVIEW");
-
-  guided = await runtime.workflowService.advance({
-    repoPath: project,
-    event: "review_passed",
-  });
+  guided = await completeWorkflowWithEvidence(runtime, project);
   assert.equal(guided.workflow.phase, "DONE");
   assert.equal(guided.recommendation.skill, null);
 
@@ -492,14 +531,7 @@ test("v0.3-04: guided workflow fails closed instead of guessing or skipping phas
     (error) => error?.code === "INVALID_WORKFLOW_TRANSITION",
   );
 
-  guided = await runtime.workflowService.advance({
-    repoPath: project,
-    event: "implementation_complete",
-  });
-  guided = await runtime.workflowService.advance({
-    repoPath: project,
-    event: "review_passed",
-  });
+  guided = await completeWorkflowWithEvidence(runtime, project);
   assert.equal(guided.workflow.phase, "DONE");
 
   await assert.rejects(

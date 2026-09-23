@@ -175,6 +175,7 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
   const workflowService = new WorkflowService({
     stateStore,
     skillService,
+    taskService,
   });
 
   return {
@@ -951,6 +952,21 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       route_clarity: z.enum(["clear", "foggy", "unknown"]).optional(),
       open_decisions: z.array(z.string()).optional(),
       artifacts: z.record(z.string(), z.string()).optional(),
+      implementation_task_ids: z.array(z.string().min(1)).optional(),
+      review_evidence: z
+        .object({
+          target_fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+          standards: z.object({
+            result: z.enum(["PASS", "FAIL"]),
+            blocking_findings: z.number().int().min(0),
+          }),
+          spec: z.object({
+            result: z.enum(["PASS", "FAIL"]),
+            blocking_findings: z.number().int().min(0),
+          }),
+          note: z.string().optional(),
+        })
+        .optional(),
       note: z.string().optional(),
     },
     safe(async ({
@@ -959,6 +975,8 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       route_clarity,
       open_decisions,
       artifacts,
+      implementation_task_ids,
+      review_evidence,
       note,
     }) =>
       toolResult(
@@ -968,6 +986,8 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
           routeClarity: route_clarity,
           openDecisions: open_decisions,
           artifacts,
+          implementationTaskIds: implementation_task_ids,
+          reviewEvidence: review_evidence,
           note,
         }),
       )),
