@@ -240,7 +240,7 @@ test("v0.2-06: planned restart is graceful, healthy again, and records owned pro
   clients.push(first);
 
   const tools = await first.client.listTools();
-  assert.equal(tools.tools.length, 31);
+  assert.equal(tools.tools.length, 32);
 
   const task = dataFrom(
     await first.client.callTool({
@@ -284,7 +284,7 @@ test("v0.2-06: planned restart is graceful, healthy again, and records owned pro
 
   const second = await openClient(port, "planned-second");
   clients.push(second);
-  assert.equal((await second.client.listTools()).tools.length, 31);
+  assert.equal((await second.client.listTools()).tools.length, 32);
 
   const resumed = dataFrom(
     await second.client.callTool({
@@ -384,7 +384,7 @@ test("v0.2-06: hard crash recovers health and MCP while lost process ownership b
 
   const second = await openClient(port, "crash-second");
   clients.push(second);
-  assert.equal((await second.client.listTools()).tools.length, 31);
+  assert.equal((await second.client.listTools()).tools.length, 32);
 
   const resumed = dataFrom(
     await second.client.callTool({
@@ -397,7 +397,7 @@ test("v0.2-06: hard crash recovers health and MCP while lost process ownership b
   );
   assert.ok(restored);
   assert.equal(restored.status, "INTERRUPTED");
-  assert.match(restored.error, /restarted|lost ownership/i);
+  assert.match(restored.error, /restarted|lost ownership|no longer alive|no longer owns/i);
 });
 
 test("v0.2-06: systemd unit contract enforces always-restart, cgroup kill, and health gate", async () => {

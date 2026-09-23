@@ -81,12 +81,13 @@ test("v0.2-01: stdio serves legacy and 2026-07-28 with the same tool surface", a
   }
 
   assert.deepEqual(modernTools, legacyTools);
-  assert.equal(modernTools.length, 31);
+  assert.equal(modernTools.length, 32);
   assert.equal(modernTools.includes("task.create"), true);
   assert.equal(modernTools.includes("process.start"), true);
   assert.equal(modernTools.includes("audit.get"), true);
   assert.equal(modernTools.includes("skill.install"), true);
   assert.equal(modernTools.includes("skill.read"), true);
+  assert.equal(modernTools.includes("task.list"), true);
   assert.equal(modernTools.includes("skill.invoke"), true);
   assert.equal(modernTools.includes("workflow.start"), true);
   assert.equal(modernTools.includes("workflow.list"), true);

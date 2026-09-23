@@ -473,7 +473,8 @@ test("Ticket 07: host access and structured audit preserve live fidelity and red
   );
   assert.equal(boundedOutput.persisted_output_truncated, true);
   assert.ok(Buffer.byteLength(boundedOutput.stdout_chunk, "utf8") <= 65536);
-  assert.match(boundedOutput.stdout_chunk, /:END7 TOKEN=LIVE_OUTPUT_SECRET_7$/);
+  assert.match(boundedOutput.stdout_chunk, /:END7 TOKEN=\[REDACTED\]$/);
+  assert.equal(boundedOutput.stdout_chunk.includes(outputSecret), false);
 
   const auditAfterRestart = dataFrom(
     await second.client.callTool({

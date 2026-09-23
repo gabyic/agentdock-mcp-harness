@@ -59,6 +59,7 @@ function safe(handler) {
 export const TOOL_RISK_PROFILES = Object.freeze({
   "repo.inspect": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "task.create": { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  "task.list": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "task.resume": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "task.finish": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   "task.cancel": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
@@ -239,6 +240,56 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
         created_at: task.created_at,
       });
       return toolResult(task);
+    }),
+  );
+
+  registerTool(
+    server,
+    "task.list",
+    "List durable coding Tasks, including ACTIVE, finalized, stale-by-age, worktree, and live-process status. This never deletes or cleans a Task.",
+    {
+      stale_after_seconds: z.number().int().min(60).max(365 * 24 * 60 * 60).optional(),
+      include_finalized: z.boolean().optional(),
+    },
+    safe(async ({ stale_after_seconds = 3600, include_finalized = true }) => {
+      const now = Date.now();
+      const tasks = taskService
+        .list()
+        .filter((task) => include_finalized || task.status === "ACTIVE")
+        .map((task) => {
+          const activeProcesses =
+            task.status === "ACTIVE"
+              ? processService.activeForTask(task.task_id)
+              : [];
+          const updatedMs = Date.parse(task.updated_at ?? task.created_at ?? "");
+          const ageSeconds = Number.isFinite(updatedMs)
+            ? Math.max(0, Math.floor((now - updatedMs) / 1000))
+            : null;
+          return {
+            task_id: task.task_id,
+            status: task.status,
+            source_repo: task.source_repo,
+            worktree_path: task.worktree_path,
+            workspace_cleaned: Boolean(task.workspace_cleaned),
+            outcome: task.outcome ?? null,
+            final_commit_sha: task.final_commit_sha ?? null,
+            retention_ref: task.retention_ref ?? null,
+            active_process_count: activeProcesses.length,
+            age_seconds: ageSeconds,
+            stale:
+              task.status === "ACTIVE" &&
+              activeProcesses.length === 0 &&
+              ageSeconds !== null &&
+              ageSeconds >= stale_after_seconds,
+            created_at: task.created_at,
+            updated_at: task.updated_at,
+          };
+        });
+      return toolResult({
+        task_count: tasks.length,
+        stale_after_seconds,
+        tasks,
+      });
     }),
   );
 

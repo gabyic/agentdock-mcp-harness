@@ -175,7 +175,7 @@ test("v0.2-02: native stateless Streamable HTTP preserves shared runtime and hos
   assert.equal(transport.sessionId, undefined);
 
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 31);
+  assert.equal(tools.tools.length, 32);
   assert.equal(tools.tools.some((tool) => tool.name === "task.create"), true);
 
   await legacyClient.connect(legacyTransport);

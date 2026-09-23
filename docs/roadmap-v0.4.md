@@ -4,7 +4,7 @@ v0.4 is the distribution and ChatGPT-native integration line.
 
 ## P0 Directory readiness
 - [x] Preserve maintenance/v0.3 before v0.4 development.
-- [x] Keep the MCP surface stable at 31 tools.
+- [x] Keep the MCP surface explicit and reviewable; Guarded Execution adds read-only task.list, bringing the surface to 32 tools.
 - [x] Add a canonical risk profile for every tool.
 - [x] Emit explicit readOnlyHint, destructiveHint, and openWorldHint booleans for every tool.
 - [x] Fail closed when a future tool lacks a risk profile.

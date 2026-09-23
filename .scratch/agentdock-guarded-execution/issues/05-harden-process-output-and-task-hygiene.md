@@ -4,10 +4,10 @@
 
 **Blocked by:** 04: Migrate durable state callers to the transactional seam
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Live process output is byte-bounded with correct output-floor cursor semantics.
-- [ ] Durable command/env/stdout/stderr summaries do not retain raw canary credentials.
-- [ ] Process status distinguishes live ownership from persisted historical state without another runtime falsely marking an owned process interrupted.
-- [ ] Users can list ACTIVE/finalized/stale Task state without filesystem inspection.
-- [ ] No stale Task is automatically deleted based only on age.
+- [x] Live process output is byte-bounded with correct output-floor cursor semantics.
+- [x] Durable command/env/stdout/stderr summaries do not retain raw canary credentials.
+- [x] Process status distinguishes live ownership from persisted historical state without another runtime falsely marking an owned process interrupted.
+- [x] Users can list ACTIVE/finalized/stale Task state without filesystem inspection.
+- [x] No stale Task is automatically deleted based only on age.

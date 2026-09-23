@@ -302,8 +302,23 @@ test("Ticket 04: Task and process diagnostics survive reconnect and AgentDock re
     (entry) => entry.process_id === running.process_id,
   );
   assert.ok(restoredRunning);
-  assert.equal(restoredRunning.status, "INTERRUPTED");
-  assert.match(restoredRunning.error, /restarted|lost ownership/i);
+  assert.equal(restoredRunning.status, "RUNNING");
+  assert.equal(restoredRunning.ownership, "EXTERNAL");
+
+  const interruptedStatus = await waitFor(async () => {
+    const status = dataFrom(
+      await third.client.callTool({
+        name: "process.status",
+        arguments: {
+          task_id: originalTaskId,
+          process_id: running.process_id,
+        },
+      }),
+    );
+    return status.status === "INTERRUPTED" ? status : null;
+  }, { timeoutMs: 5000 });
+  assert.equal(interruptedStatus.ownership, "HISTORICAL");
+  assert.match(interruptedStatus.error, /no longer alive|no longer owns/i);
 
   const interruptedOutput = dataFrom(
     await third.client.callTool({

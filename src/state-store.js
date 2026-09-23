@@ -10,7 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import { AgentDockError } from "./errors.js";
-import { redactEnv } from "./redaction.js";
+import { redactEnv, redactObject, redactString } from "./redaction.js";
 import {
   DEFAULT_PERSISTED_PROCESS_OUTPUT_BYTES,
   DEFAULT_STATE_RELATIVE_PATH,
@@ -34,6 +34,7 @@ function persistedOutput(record, maxPersistedOutputBytes) {
         cursor: chunk.cursor,
         stream: chunk.stream,
         text,
+        partial: Boolean(chunk.partial),
       });
       bytes += size;
       continue;
@@ -49,6 +50,7 @@ function persistedOutput(record, maxPersistedOutputBytes) {
         cursor: chunk.cursor,
         stream: chunk.stream,
         text: tail,
+        partial: true,
       });
       bytes += Buffer.byteLength(tail, "utf8");
     }
@@ -540,6 +542,10 @@ export class StateStore {
     return task;
   }
 
+  listTasks() {
+    return this.listDocuments("task").map((entry) => entry.value);
+  }
+
   loadProcess(processId) {
     if (this.#backend === "sqlite") {
       return this.loadDocument("process", processId);
@@ -558,17 +564,30 @@ export class StateStore {
       pid: record.pid,
       status: record.status,
       mode: record.mode,
-      argv: record.argv,
-      shell: record.shell,
+      argv: redactObject(record.argv),
+      shell:
+        typeof record.shell === "string"
+          ? redactString(record.shell)
+          : record.shell,
       cwd: record.cwd,
+      cwd_scope: record.cwd_scope,
       env: redactEnv(record.env),
+      owner_runtime_id: record.owner_runtime_id ?? null,
       started_at: record.started_at,
       ended_at: record.ended_at,
       exit_code: record.exit_code,
       signal: record.signal,
-      error: record.error,
+      error:
+        typeof record.error === "string"
+          ? redactString(record.error)
+          : record.error,
       cancel_requested: record.cancel_requested,
+      live_output_truncated: record.live_output_truncated ?? false,
       ...outputState,
+      output: outputState.output.map((chunk) => ({
+        ...chunk,
+        text: redactString(String(chunk.text ?? "")),
+      })),
     };
 
     if (this.#backend === "sqlite") {

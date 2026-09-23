@@ -55,6 +55,15 @@ export class TaskService {
     return task;
   }
 
+  list() {
+    return this.#store
+      .listTasks()
+      .filter((task) => task && typeof task === "object")
+      .sort((a, b) =>
+        String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")),
+      );
+  }
+
   mutate(taskId, mutator) {
     this.#validateTaskId(taskId);
     let result;

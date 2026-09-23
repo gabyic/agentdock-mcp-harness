@@ -3,18 +3,45 @@ import { spawn } from "node:child_process";
 import { AgentDockError } from "./errors.js";
 import { resolveExistingTaskPath } from "./workspace-paths.js";
 
+export const DEFAULT_LIVE_PROCESS_OUTPUT_BYTES = 1024 * 1024;
+
+function processAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    if (error?.code === "EPERM") return true;
+    throw error;
+  }
+}
+
 export class ProcessService {
   #tasks;
   #store;
   #approval;
   #audit;
   #processes = new Map();
+  #runtimeId;
+  #maxLiveOutputBytes;
 
-  constructor({ taskService, stateStore, approvalService, auditService }) {
+  constructor({
+    taskService,
+    stateStore,
+    approvalService,
+    auditService,
+    maxLiveOutputBytes = DEFAULT_LIVE_PROCESS_OUTPUT_BYTES,
+  }) {
+    if (!Number.isInteger(maxLiveOutputBytes) || maxLiveOutputBytes < 1024) {
+      throw new TypeError("maxLiveOutputBytes must be an integer >= 1024.");
+    }
     this.#tasks = taskService;
     this.#store = stateStore;
     this.#approval = approvalService;
     this.#audit = auditService;
+    this.#runtimeId = "runtime_" + randomUUID();
+    this.#maxLiveOutputBytes = maxLiveOutputBytes;
   }
 
   #restore(processId) {
@@ -30,16 +57,25 @@ export class ProcessService {
       next_output_cursor:
         snapshot.next_output_cursor ?? (snapshot.output?.length ?? 0),
       output_total_bytes: snapshot.output_total_bytes ?? 0,
+      live_output_bytes: (snapshot.output ?? []).reduce(
+        (total, chunk) =>
+          total + Buffer.byteLength(String(chunk.text ?? ""), "utf8"),
+        0,
+      ),
+      live_output_truncated: snapshot.live_output_truncated ?? false,
       persisted_output_truncated:
         snapshot.persisted_output_truncated ?? false,
       child: null,
     };
 
-    if (record.status === "RUNNING" || record.status === "CANCELLING") {
+    if (
+      (record.status === "RUNNING" || record.status === "CANCELLING") &&
+      !processAlive(record.pid)
+    ) {
       record.status = "INTERRUPTED";
       record.ended_at ??= new Date().toISOString();
       record.error ??=
-        "AgentDock restarted or lost ownership of the running process.";
+        "Persisted process is no longer alive; AgentDock no longer owns it.";
       this.#store.saveProcess(record);
       this.#audit?.append(record.task_id, {
         event: "PROCESS_INTERRUPTED",
@@ -68,7 +104,51 @@ export class ProcessService {
         "Process not found: " + processId,
       );
     }
+
+    if (
+      !record.child &&
+      (record.status === "RUNNING" || record.status === "CANCELLING")
+    ) {
+      const latest = this.#store.loadProcess(processId);
+      if (
+        latest &&
+        latest.status !== "RUNNING" &&
+        latest.status !== "CANCELLING"
+      ) {
+        Object.assign(record, latest, {
+          output: latest.output ?? record.output ?? [],
+          child: null,
+        });
+      } else if (!processAlive(record.pid)) {
+        record.status = "INTERRUPTED";
+        record.ended_at ??= new Date().toISOString();
+        record.error ??=
+          "Persisted process is no longer alive; AgentDock no longer owns it.";
+        this.#store.saveProcess(record);
+        this.#audit?.append(record.task_id, {
+          event: "PROCESS_INTERRUPTED",
+          process_id: record.process_id,
+          pid: record.pid,
+          status: record.status,
+          cwd: record.cwd,
+          ended_at: record.ended_at,
+          reason: record.error,
+        });
+      }
+    }
+
     return record;
+  }
+
+  #ownership(record) {
+    if (record.child) return "OWNED";
+    if (
+      (record.status === "RUNNING" || record.status === "CANCELLING") &&
+      processAlive(record.pid)
+    ) {
+      return "EXTERNAL";
+    }
+    return "HISTORICAL";
   }
 
   #public(record) {
@@ -90,6 +170,8 @@ export class ProcessService {
       cancel_requested: record.cancel_requested,
       persisted_output_truncated:
         record.persisted_output_truncated ?? false,
+      live_output_truncated: record.live_output_truncated ?? false,
+      ownership: this.#ownership(record),
     };
   }
 
@@ -291,6 +373,7 @@ export class ProcessService {
       cwd: location.resolved,
       cwd_scope: location.scope,
       env: { ...env },
+      owner_runtime_id: this.#runtimeId,
       started_at: new Date().toISOString(),
       ended_at: null,
       exit_code: null,
@@ -301,6 +384,8 @@ export class ProcessService {
       output_floor_cursor: 0,
       next_output_cursor: 0,
       output_total_bytes: 0,
+      live_output_bytes: 0,
+      live_output_truncated: false,
       persisted_output_truncated: false,
       child,
     };
@@ -323,13 +408,43 @@ export class ProcessService {
 
     const append = (stream, chunk) => {
       const text = chunk.toString("utf8");
+      const size = Buffer.byteLength(text, "utf8");
       record.output.push({
         cursor: record.next_output_cursor,
         stream,
         text,
       });
       record.next_output_cursor += 1;
-      record.output_total_bytes += Buffer.byteLength(text, "utf8");
+      record.output_total_bytes += size;
+      record.live_output_bytes = (record.live_output_bytes ?? 0) + size;
+
+      while (
+        record.output.length > 1 &&
+        record.live_output_bytes > this.#maxLiveOutputBytes
+      ) {
+        const removed = record.output.shift();
+        record.live_output_bytes -= Buffer.byteLength(
+          String(removed?.text ?? ""),
+          "utf8",
+        );
+        record.output_floor_cursor = record.output[0]?.cursor ?? record.next_output_cursor;
+        record.live_output_truncated = true;
+      }
+
+      if (
+        record.output.length === 1 &&
+        record.live_output_bytes > this.#maxLiveOutputBytes
+      ) {
+        const only = record.output[0];
+        const buffer = Buffer.from(String(only.text ?? ""), "utf8");
+        only.text = buffer
+          .subarray(Math.max(0, buffer.length - this.#maxLiveOutputBytes))
+          .toString("utf8");
+        only.partial = true;
+        record.live_output_bytes = Buffer.byteLength(only.text, "utf8");
+        record.live_output_truncated = true;
+      }
+
       this.#store.saveProcess(record);
     };
 
@@ -428,9 +543,13 @@ export class ProcessService {
       effective_cursor: effectiveCursor,
       output_floor_cursor: floor,
       next_cursor: next,
-      truncated_before_cursor: cursor < floor,
+      truncated_before_cursor:
+        cursor < floor ||
+        (cursor === floor && Boolean(record.output[0]?.partial)),
       persisted_output_truncated:
         record.persisted_output_truncated ?? false,
+      live_output_truncated: record.live_output_truncated ?? false,
+      ownership: this.#ownership(record),
       chunks,
       stdout_chunk: chunks
         .filter((chunk) => chunk.stream === "stdout")
