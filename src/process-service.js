@@ -307,18 +307,16 @@ export class ProcessService {
     };
   }
 
-  async start({
+  async planStart({
     taskId,
     argv,
     shell,
     cwd = ".",
-    env = {},
   }) {
     this.#tasks.assertActive(taskId);
 
     const hasArgv = Array.isArray(argv);
     const hasShell = typeof shell === "string";
-
     if (hasArgv === hasShell) {
       throw new AgentDockError(
         "INVALID_PROCESS_MODE",
@@ -343,27 +341,78 @@ export class ProcessService {
       taskId,
       cwd,
     );
+    const plan = this.#execution.plan({
+      scope: location.scope,
+      cwd: location.resolved,
+    });
+    return {
+      task_id: taskId,
+      cwd: location.resolved,
+      cwd_scope: location.scope,
+      workspace_root: location.root,
+      plan,
+    };
+  }
 
-    this.#approval?.authorize({
+  async start({
+    taskId,
+    argv,
+    shell,
+    cwd = ".",
+    env = {},
+    humanConfirmed = false,
+    legacyApproval = false,
+  }) {
+    const prepared = await this.planStart({
+      taskId,
+      argv,
+      shell,
+      cwd,
+    });
+    const location = {
+      scope: prepared.cwd_scope,
+      resolved: prepared.cwd,
+      root: prepared.workspace_root,
+    };
+    const executionPlan = prepared.plan;
+    const hasArgv = Array.isArray(argv);
+    const hasShell = typeof shell === "string";
+
+    const authorization = this.#approval?.authorize({
       taskId,
       tool: "process.start",
       shell,
       argv,
       cwd: location.resolved,
       env,
+      humanConfirmed:
+        executionPlan.guarded_mode === "enforce" &&
+        executionPlan.lane === "HOST" &&
+        humanConfirmed,
+      requirePolicyApproval:
+        executionPlan.guarded_mode === "enforce" &&
+        executionPlan.lane === "HOST" &&
+        legacyApproval,
     });
+
+    const hostAuthorized =
+      executionPlan.guarded_mode !== "enforce" ||
+      executionPlan.lane !== "HOST" ||
+      Boolean(humanConfirmed) ||
+      Boolean(authorization?.grant);
 
     const processId = "proc_" + randomUUID();
     const mode = hasArgv ? "argv" : "shell";
     const launched = this.#execution.launch({
       scope: location.scope,
       cwd: location.resolved,
+      workspaceRoot: location.root,
       argv,
       shell,
       env,
+      hostAuthorized,
     });
     const child = launched.child;
-    const executionPlan = launched.plan;
 
     this.#audit?.append(taskId, {
       event: "GUARDED_EXECUTION_DECISION",
@@ -372,7 +421,11 @@ export class ProcessService {
       lane: executionPlan.lane,
       decision: executionPlan.decision,
       cwd: executionPlan.cwd,
+      network: executionPlan.network,
+      hidden_paths: executionPlan.hidden_paths,
       sandbox: executionPlan.sandbox,
+      human_confirmed: Boolean(humanConfirmed),
+      compatibility_approval: Boolean(authorization?.grant),
     });
 
     const record = {

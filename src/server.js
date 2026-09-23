@@ -1,4 +1,9 @@
-import { McpServer } from "@modelcontextprotocol/server";
+import {
+  McpServer,
+  acceptedContent,
+  inputRequired,
+} from "@modelcontextprotocol/server";
+import path from "node:path";
 import * as z from "zod/v4";
 import { AgentDockError } from "./errors.js";
 import { loadAgentDockConfig } from "./config.js";
@@ -9,6 +14,7 @@ import { FileQueryService } from "./file-query-service.js";
 import { GitService } from "./git-service.js";
 import { ExecutionService } from "./execution-service.js";
 import { PolicyService } from "./policy-service.js";
+import { redactString } from "./redaction.js";
 import { ProcessService } from "./process-service.js";
 import { SkillService } from "./skill-service.js";
 import { StateStore } from "./state-store.js";
@@ -48,12 +54,44 @@ function toolError(error) {
 }
 
 function safe(handler) {
-  return async (input) => {
+  return async (input, ctx) => {
     try {
-      return await handler(input);
+      return await handler(input, ctx);
     } catch (error) {
       return toolError(error);
     }
+  };
+}
+
+function humanConfirmation(ctx, key, { message, title }) {
+  const responses = ctx?.mcpReq?.inputResponses;
+  if (!responses || !Object.hasOwn(responses, key)) {
+    return {
+      pending: inputRequired({
+        inputRequests: {
+          [key]: inputRequired.elicit({
+            message,
+            requestedSchema: {
+              type: "object",
+              properties: {
+                confirm: {
+                  type: "boolean",
+                  title,
+                },
+              },
+              required: ["confirm"],
+            },
+          }),
+        },
+      }),
+      accepted: null,
+    };
+  }
+
+  const accepted = acceptedContent(responses, key);
+  return {
+    pending: null,
+    accepted: Boolean(accepted?.confirm),
   };
 }
 
@@ -165,6 +203,8 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
   const executionService = new ExecutionService({
     mode: resolvedConfig.guarded_execution.mode,
     sandboxBinary: resolvedConfig.guarded_execution.sandbox_binary,
+    network: resolvedConfig.guarded_execution.sandbox_network,
+    hiddenPaths: resolvedConfig.guarded_execution.hidden_paths,
   });
   const processService = new ProcessService({
     taskService,
@@ -211,6 +251,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     approvalService,
     fileQueryService,
     fileEditService,
+    executionService,
     processService,
     skillService,
     workflowService,
@@ -516,51 +557,158 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
   registerTool(
     server,
     "file.patch",
-    "Patch an existing file if its SHA-256 still matches. Relative paths use the Task worktree; absolute paths use the host OS.",
+    "Patch an existing file if its SHA-256 still matches. Relative paths use the Task worktree; absolute host paths require Guarded Execution confirmation in enforce mode.",
     {
       task_id: z.string().min(1),
       path: z.string().min(1),
       expected_sha256: z.string().regex(/^[0-9a-f]{64}$/),
       old_text: z.string().min(1),
       new_text: z.string(),
+      confirmation_mode: z.enum(["mcp", "legacy_approval"]).optional(),
     },
     safe(async ({
       task_id,
-      path,
+      path: filePath,
       expected_sha256,
       old_text,
       new_text,
-    }) =>
-      toolResult(
+      confirmation_mode,
+    }, ctx) => {
+      if (
+        path.isAbsolute(filePath) &&
+        executionService.mode === "enforce"
+      ) {
+        if (confirmation_mode === "legacy_approval") {
+          approvalService.authorize({
+            taskId: task_id,
+            tool: "file.patch",
+            argv: [filePath],
+            cwd: filePath,
+            requirePolicyApproval: true,
+          });
+        } else {
+          const confirmation = humanConfirmation(
+            ctx,
+            "confirm_host_file_patch",
+            {
+              message:
+                "Approve modifying host file " +
+                redactString(filePath) +
+                "?",
+              title: "Confirm host file patch",
+            },
+          );
+          if (confirmation.pending) return confirmation.pending;
+          if (!confirmation.accepted) {
+            return toolResult({
+              executed: false,
+              confirmation: "declined",
+              tool: "file.patch",
+              path: filePath,
+            });
+          }
+          approvalService.authorize({
+            taskId: task_id,
+            tool: "file.patch",
+            argv: [filePath],
+            cwd: filePath,
+            humanConfirmed: true,
+          });
+          auditService.append(task_id, {
+            event: "HUMAN_CONFIRMATION_ACCEPTED",
+            tool: "file.patch",
+            target: filePath,
+          });
+        }
+      }
+
+      return toolResult(
         await fileEditService.patch({
           taskId: task_id,
-          filePath: path,
+          filePath,
           expectedSha256: expected_sha256,
           oldText: old_text,
           newText: new_text,
         }),
-      )),
+      );
+    }),
   );
 
   registerTool(
     server,
     "file.write",
-    "Create or replace a UTF-8 file. Relative paths use the Task worktree; absolute paths use the host OS.",
+    "Create or replace a UTF-8 file. Relative paths use the Task worktree; absolute host paths require Guarded Execution confirmation in enforce mode.",
     {
       task_id: z.string().min(1),
       path: z.string().min(1),
       content: z.string(),
       overwrite: z.boolean().optional(),
+      confirmation_mode: z.enum(["mcp", "legacy_approval"]).optional(),
     },
-    safe(async ({ task_id, path, content, overwrite }) =>
-      toolResult(
+    safe(async ({
+      task_id,
+      path: filePath,
+      content,
+      overwrite,
+      confirmation_mode,
+    }, ctx) => {
+      if (
+        path.isAbsolute(filePath) &&
+        executionService.mode === "enforce"
+      ) {
+        if (confirmation_mode === "legacy_approval") {
+          approvalService.authorize({
+            taskId: task_id,
+            tool: "file.write",
+            argv: [filePath],
+            cwd: filePath,
+            requirePolicyApproval: true,
+          });
+        } else {
+          const confirmation = humanConfirmation(
+            ctx,
+            "confirm_host_file_write",
+            {
+              message:
+                "Approve writing host file " +
+                redactString(filePath) +
+                "?",
+              title: "Confirm host file write",
+            },
+          );
+          if (confirmation.pending) return confirmation.pending;
+          if (!confirmation.accepted) {
+            return toolResult({
+              executed: false,
+              confirmation: "declined",
+              tool: "file.write",
+              path: filePath,
+            });
+          }
+          approvalService.authorize({
+            taskId: task_id,
+            tool: "file.write",
+            argv: [filePath],
+            cwd: filePath,
+            humanConfirmed: true,
+          });
+          auditService.append(task_id, {
+            event: "HUMAN_CONFIRMATION_ACCEPTED",
+            tool: "file.write",
+            target: filePath,
+          });
+        }
+      }
+
+      return toolResult(
         await fileEditService.write({
           taskId: task_id,
-          filePath: path,
+          filePath,
           content,
           overwrite,
         }),
-      )),
+      );
+    }),
   );
 
   registerTool(
@@ -671,16 +819,91 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
   registerTool(
     server,
     "process.start",
-    "Start an asynchronous Task process using explicit argv or shell mode.",
+    "Start an asynchronous Task process. In Guarded Execution enforce mode, Workspace processes run in the sandbox; Host processes require MCP human confirmation by default or an explicit legacy_approval compatibility path.",
     {
       task_id: z.string().min(1),
       argv: z.array(z.string()).min(1).optional(),
       shell: z.string().min(1).optional(),
       cwd: z.string().optional(),
       env: z.record(z.string(), z.string()).optional(),
+      confirmation_mode: z.enum(["mcp", "legacy_approval"]).optional(),
     },
-    safe(async ({ task_id, argv, shell, cwd, env }) =>
-      toolResult(
+    safe(async ({
+      task_id,
+      argv,
+      shell,
+      cwd,
+      env,
+      confirmation_mode,
+    }, ctx) => {
+      const prepared = await processService.planStart({
+        taskId: task_id,
+        argv,
+        shell,
+        cwd,
+      });
+
+      if (
+        prepared.plan.guarded_mode === "enforce" &&
+        prepared.plan.lane === "HOST"
+      ) {
+        if (confirmation_mode === "legacy_approval") {
+          return toolResult(
+            await processService.start({
+              taskId: task_id,
+              argv,
+              shell,
+              cwd,
+              env,
+              legacyApproval: true,
+            }),
+          );
+        }
+
+        const commandSummary = argv
+          ? redactString(argv.join(" "))
+          : redactString(shell ?? "");
+        const confirmation = humanConfirmation(
+          ctx,
+          "confirm_host_process",
+          {
+            message:
+              "Approve host process in " +
+              redactString(prepared.cwd) +
+              ": " +
+              commandSummary,
+            title: "Confirm host process",
+          },
+        );
+        if (confirmation.pending) return confirmation.pending;
+        if (!confirmation.accepted) {
+          return toolResult({
+            executed: false,
+            confirmation: "declined",
+            tool: "process.start",
+            cwd: prepared.cwd,
+          });
+        }
+
+        auditService.append(task_id, {
+          event: "HUMAN_CONFIRMATION_ACCEPTED",
+          tool: "process.start",
+          cwd: prepared.cwd,
+          lane: "HOST",
+        });
+        return toolResult(
+          await processService.start({
+            taskId: task_id,
+            argv,
+            shell,
+            cwd,
+            env,
+            humanConfirmed: true,
+          }),
+        );
+      }
+
+      return toolResult(
         await processService.start({
           taskId: task_id,
           argv,
@@ -688,7 +911,8 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
           cwd,
           env,
         }),
-      )),
+      );
+    }),
   );
 
   registerTool(

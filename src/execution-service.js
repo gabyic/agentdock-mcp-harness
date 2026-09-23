@@ -1,8 +1,18 @@
 import { execFileSync, spawn } from "node:child_process";
+import { lstatSync } from "node:fs";
 import { AgentDockError } from "./errors.js";
 
 export const GUARDED_EXECUTION_MODES = Object.freeze(["off", "observe", "enforce"]);
 export const MIN_SUPPORTED_BWRAP_VERSION = "0.12.0";
+
+const SAFE_SANDBOX_ENV_KEYS = [
+  "PATH",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+  "TZ",
+];
 
 function parseVersion(value) {
   const match = String(value ?? "").match(/(\d+)\.(\d+)\.(\d+)/);
@@ -52,20 +62,59 @@ export function probeSandboxRuntime({
       version: null,
       min_supported_version: minVersion,
       ready: false,
-      reason: error?.code === "ENOENT"
-        ? "sandbox runtime is not installed"
-        : "sandbox runtime probe failed",
+      reason:
+        error?.code === "ENOENT"
+          ? "sandbox runtime is not installed"
+          : "sandbox runtime probe failed",
     };
   }
+}
+
+function hiddenMountArgs(paths) {
+  const args = [];
+  for (const candidate of paths) {
+    try {
+      const info = lstatSync(candidate);
+      if (info.isDirectory()) {
+        args.push("--tmpfs", candidate);
+      } else {
+        args.push("--ro-bind", "/dev/null", candidate);
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  return args;
+}
+
+function sandboxEnvironmentArgs(explicitEnv = {}) {
+  const values = {};
+  for (const key of SAFE_SANDBOX_ENV_KEYS) {
+    if (process.env[key] !== undefined) values[key] = process.env[key];
+  }
+  for (const [key, value] of Object.entries(explicitEnv ?? {})) {
+    values[key] = String(value);
+  }
+  values.HOME = "/tmp/agentdock-home";
+
+  const args = ["--clearenv"];
+  for (const [key, value] of Object.entries(values)) {
+    args.push("--setenv", key, value);
+  }
+  return args;
 }
 
 export class ExecutionService {
   #mode;
   #sandboxBinary;
+  #network;
+  #hiddenPaths;
 
   constructor({
     mode = "off",
     sandboxBinary = "/usr/bin/bwrap",
+    network = "deny",
+    hiddenPaths = [],
   } = {}) {
     if (!GUARDED_EXECUTION_MODES.includes(mode)) {
       throw new TypeError(
@@ -73,8 +122,13 @@ export class ExecutionService {
           GUARDED_EXECUTION_MODES.join(", "),
       );
     }
+    if (!["deny", "allow"].includes(network)) {
+      throw new TypeError("sandbox network must be deny or allow.");
+    }
     this.#mode = mode;
     this.#sandboxBinary = sandboxBinary;
+    this.#network = network;
+    this.#hiddenPaths = [...new Set(hiddenPaths.map((value) => String(value)))];
   }
 
   get mode() {
@@ -112,30 +166,109 @@ export class ExecutionService {
       lane,
       decision,
       cwd,
+      network: this.#network,
+      hidden_paths: [...this.#hiddenPaths],
       sandbox,
     };
   }
 
-  launch({ scope, cwd, argv, shell, env }) {
-    const plan = this.plan({ scope, cwd });
-    if (this.#mode === "enforce") {
-      throw new AgentDockError(
-        "GUARDED_EXECUTION_ENFORCEMENT_PENDING",
-        "Guarded Execution enforcement adapters are not enabled in this slice.",
-        { plan },
-      );
-    }
-
+  #spawnLegacy({ cwd, argv, shell, env }) {
     const hasArgv = Array.isArray(argv);
     const command = hasArgv ? argv[0] : shell;
     const args = hasArgv ? argv.slice(1) : [];
-    const child = spawn(command, args, {
+    return spawn(command, args, {
       cwd,
       env: { ...process.env, ...env },
       shell: !hasArgv,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    return { child, plan };
+  }
+
+  #spawnSandbox({ cwd, workspaceRoot, argv, shell, env }) {
+    if (!workspaceRoot) {
+      throw new AgentDockError(
+        "GUARDED_EXECUTION_WORKSPACE_REQUIRED",
+        "Sandboxed execution requires a Task workspace root.",
+      );
+    }
+
+    const args = [
+      "--ro-bind", "/", "/",
+      "--proc", "/proc",
+      "--dev", "/dev",
+      "--tmpfs", "/tmp",
+      "--bind", workspaceRoot, workspaceRoot,
+      ...hiddenMountArgs(this.#hiddenPaths),
+      "--unshare-user",
+      "--unshare-pid",
+      "--cap-drop", "ALL",
+      "--die-with-parent",
+      "--new-session",
+      ...sandboxEnvironmentArgs(env),
+      "--dir", "/tmp/agentdock-home",
+      "--chdir", cwd,
+    ];
+    if (this.#network === "deny") {
+      args.push("--unshare-net");
+    }
+
+    if (Array.isArray(argv)) {
+      args.push("--", ...argv);
+    } else {
+      args.push("--", "/bin/sh", "-c", shell);
+    }
+
+    return spawn(this.#sandboxBinary, args, {
+      cwd,
+      env: process.env,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  }
+
+  launch({
+    scope,
+    cwd,
+    workspaceRoot,
+    argv,
+    shell,
+    env,
+    hostAuthorized = false,
+  }) {
+    const plan = this.plan({ scope, cwd });
+
+    if (this.#mode !== "enforce") {
+      return {
+        child: this.#spawnLegacy({ cwd, argv, shell, env }),
+        plan,
+      };
+    }
+
+    if (plan.lane === "WORKSPACE") {
+      return {
+        child: this.#spawnSandbox({
+          cwd,
+          workspaceRoot,
+          argv,
+          shell,
+          env,
+        }),
+        plan,
+      };
+    }
+
+    if (!hostAuthorized) {
+      throw new AgentDockError(
+        "GUARDED_EXECUTION_HOST_CONFIRMATION_REQUIRED",
+        "Host execution requires explicit confirmation in enforce mode.",
+        { plan },
+      );
+    }
+
+    return {
+      child: this.#spawnLegacy({ cwd, argv, shell, env }),
+      plan,
+    };
   }
 }

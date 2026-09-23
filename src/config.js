@@ -27,6 +27,8 @@ export const CONFIG_ENV_KEYS = new Set([
   "AGENTDOCK_MATT_AUTO_ROUTING",
   "AGENTDOCK_GUARDED_EXECUTION_MODE",
   "AGENTDOCK_SANDBOX_BINARY",
+  "AGENTDOCK_SANDBOX_NETWORK",
+  "AGENTDOCK_SANDBOX_HIDDEN_PATHS",
   "AGENTDOCK_TRANSPORT",
   "AGENTDOCK_HTTP_HOST",
   "AGENTDOCK_HTTP_PORT",
@@ -119,6 +121,8 @@ const AgentDockConfigSchema = z
       .object({
         mode: z.enum(["off", "observe", "enforce"]).default("off"),
         sandbox_binary: z.string().min(1).default("/usr/bin/bwrap"),
+        sandbox_network: z.enum(["deny", "allow"]).default("deny"),
+        hidden_paths: z.array(z.string().min(1)).default([]),
       })
       .strict()
       .default({}),
@@ -265,6 +269,8 @@ function defaultLayer(homeDir) {
     guarded_execution: {
       mode: "off",
       sandbox_binary: "/usr/bin/bwrap",
+      sandbox_network: "deny",
+      hidden_paths: [],
     },
     transport: {
       mode: "stdio",
@@ -344,6 +350,19 @@ function envLayer(env) {
     layer.guarded_execution = {
       ...(layer.guarded_execution ?? {}),
       sandbox_binary: env.AGENTDOCK_SANDBOX_BINARY,
+    };
+  }
+  if (env.AGENTDOCK_SANDBOX_NETWORK) {
+    layer.guarded_execution = {
+      ...(layer.guarded_execution ?? {}),
+      sandbox_network: env.AGENTDOCK_SANDBOX_NETWORK.trim().toLowerCase(),
+    };
+  }
+  const hiddenPaths = parseListEnv(env.AGENTDOCK_SANDBOX_HIDDEN_PATHS);
+  if (hiddenPaths !== undefined) {
+    layer.guarded_execution = {
+      ...(layer.guarded_execution ?? {}),
+      hidden_paths: hiddenPaths,
     };
   }
 

@@ -40,11 +40,17 @@ export class ApprovalService {
     this.#audit = auditService;
   }
 
-  authorize({ taskId, tool, shell, argv, cwd, env = {} }) {
+  authorize({
+    taskId,
+    tool,
+    shell,
+    argv,
+    cwd,
+    env = {},
+    humanConfirmed = false,
+    requirePolicyApproval = false,
+  }) {
     const policy = this.#policy.evaluate({ tool, shell, argv });
-    if (policy.effect === "allow") {
-      return { allowed: true, policy };
-    }
 
     if (policy.effect === "deny") {
       throw new AgentDockError(
@@ -55,6 +61,25 @@ export class ApprovalService {
           tool,
         },
       );
+    }
+
+    if (humanConfirmed) {
+      return {
+        allowed: true,
+        policy,
+        human_confirmed: true,
+      };
+    }
+
+    if (policy.effect === "allow") {
+      if (requirePolicyApproval) {
+        throw new AgentDockError(
+          "HOST_COMPAT_APPROVAL_POLICY_REQUIRED",
+          "Legacy host confirmation requires an explicit ask policy for this operation.",
+          { tool, rule_id: policy.rule_id },
+        );
+      }
+      return { allowed: true, policy };
     }
 
     const fingerprintPayload = {

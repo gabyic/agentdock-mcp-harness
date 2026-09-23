@@ -4,11 +4,11 @@
 
 **Blocked by:** 04: Migrate durable state callers to the transactional seam; 07: Add the Guarded Execution seam in observe mode
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Workspace tests/builds can write the Task worktree and run normally while outside writes are OS-blocked.
-- [ ] Sensitive configured paths are hidden and default Workspace network policy is enforced.
-- [ ] Host absolute file mutation authorizes before any filesystem side effect.
-- [ ] Human-required modern MCP calls use input_required elicitation and execute only after accepted confirmation.
-- [ ] A client without elicitation capability cannot cause a human-required action to execute.
-- [ ] Existing Approval behavior remains an explicit compatibility fallback rather than an automatic bypass.
+- [x] Workspace tests/builds can write the Task worktree and run normally while outside writes are OS-blocked.
+- [x] Sensitive configured paths are hidden and default Workspace network policy is enforced.
+- [x] Host absolute file mutation authorizes before any filesystem side effect.
+- [x] Human-required modern MCP calls use input_required elicitation and execute only after accepted confirmation.
+- [x] A client without elicitation capability cannot cause a human-required action to execute.
+- [x] Existing Approval behavior remains an explicit compatibility fallback rather than an automatic bypass.
