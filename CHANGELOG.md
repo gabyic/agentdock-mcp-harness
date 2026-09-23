@@ -6,6 +6,19 @@ The project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.3.0-dev.2] - 2026-09-23
+
+### Added
+
+- `skill.invoke`, a stable chat-facing gateway that returns installed Skill instructions and provenance for chat-side reasoning while keeping server-side LLM execution disabled.
+- Enforcement of user-invoked Skill semantics: Skills declaring `disable-model-invocation: true` fail closed unless the caller marks the invocation as explicitly user-triggered.
+- Optional durable workflow context on `skill.invoke` when a repository path is supplied.
+- `workflow.status`, a read-only App-facing alias for current guided-development state and the recommended next Skill.
+
+### Changed
+
+- Clarified the v0.3 product boundary: one `@AgentDock` MCP/App owns both the deterministic execution harness and the internal Matt-style Skill/Guided Workflow layer; no second Matt MCP is required.
+
 ## [0.3.0-dev.1] - 2026-09-22
 
 ### Added

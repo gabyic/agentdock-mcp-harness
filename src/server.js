@@ -634,6 +634,60 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
 
   registerTool(
     server,
+    "skill.invoke",
+    "Prepare one installed skill for chat-side reasoning without executing it or starting a server-side LLM. Use invocation_mode='user' only when the human explicitly named or selected the skill; user-invoked skills fail closed otherwise. The request is returned with the skill instructions so the chat model can follow them, while AgentDock remains the deterministic execution harness.",
+    {
+      skill_name: z.string().min(1),
+      request: z.string().min(1),
+      invocation_mode: z.enum(["user", "model"]).optional(),
+      source_id: z.string().optional(),
+      repo_path: z.string().optional(),
+    },
+    { readOnlyHint: true },
+    safe(async ({
+      skill_name,
+      request,
+      invocation_mode,
+      source_id,
+      repo_path,
+    }) => {
+      const invocation = await skillService.invoke({
+        skillName: skill_name,
+        sourceId: source_id,
+        invocationMode: invocation_mode,
+        request,
+      });
+
+      let workflowContext = null;
+      if (repo_path) {
+        try {
+          workflowContext = await workflowService.status({
+            repoPath: repo_path,
+          });
+        } catch (error) {
+          if (
+            error instanceof AgentDockError &&
+            error.code === "WORKFLOW_NOT_FOUND"
+          ) {
+            workflowContext = {
+              state: "NOT_STARTED",
+              repo_path,
+            };
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      return toolResult({
+        ...invocation,
+        workflow_context: workflowContext,
+      });
+    }),
+  );
+
+  registerTool(
+    server,
     "skill.install",
     "Install a Git-backed skill source into AgentDock state. This stores instructions only; it does not execute a skill or run an LLM.",
     {
@@ -711,6 +765,19 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
           includeDone: include_done,
         }),
       ),
+    ),
+  );
+
+  registerTool(
+    server,
+    "workflow.status",
+    "Read the current durable guided-development state and recommended skill without advancing the workflow or executing the skill.",
+    {
+      repo_path: z.string().min(1),
+    },
+    { readOnlyHint: true },
+    safe(async ({ repo_path }) =>
+      toolResult(await workflowService.status({ repoPath: repo_path })),
     ),
   );
 

@@ -8,9 +8,11 @@ v0.3 adds guided development without turning AgentDock into a second AI agent.
 - [x] `skill.install` and atomic source replacement.
 - [x] `skill.update` with source commit evidence.
 - [x] `skill.list`, `skill.search`, and supporting-resource `skill.read`.
+- [x] Explicit `skill.invoke` gateway with user-vs-model invocation enforcement and no server-side LLM.
 - [x] Matt Pocock skills repository compatibility.
 - [x] Durable per-repository workflow state.
 - [x] Cross-chat active workflow discovery with `workflow.list`.
+- [x] Read-only `workflow.status` alias for stable chat/App integration.
 - [x] In-phase durable progress with `workflow.update`.
 - [x] First-use `setup-matt-pocock-skills` precondition.
 - [x] Single-session vs multi-session routing.

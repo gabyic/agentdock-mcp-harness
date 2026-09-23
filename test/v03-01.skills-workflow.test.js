@@ -147,6 +147,30 @@ test("v0.3-01: skill resource layer installs, searches and reads Git-backed skil
   });
   assert.match(supporting.content, /Phase boundaries/);
 
+  const invoked = await runtime.skillService.invoke({
+    skillName: "ask-matt",
+    sourceId: "mattpocock",
+    invocationMode: "user",
+    request: "Route the next development step.",
+  });
+  assert.equal(invoked.invocation_version, 1);
+  assert.equal(invoked.invocation_mode, "user");
+  assert.equal(invoked.skill.name, "ask-matt");
+  assert.equal(invoked.user_request, "Route the next development step.");
+  assert.match(invoked.instructions, /Router over the engineering workflow/);
+  assert.equal(invoked.execution_contract.server_side_llm, false);
+  assert.equal(invoked.execution_contract.executes_skill_server_side, false);
+
+  await assert.rejects(
+    runtime.skillService.invoke({
+      skillName: "ask-matt",
+      sourceId: "mattpocock",
+      invocationMode: "model",
+      request: "Choose a workflow without an explicit user invocation.",
+    }),
+    (error) => error?.code === "SKILL_USER_INVOCATION_REQUIRED",
+  );
+
   await assert.rejects(
     runtime.skillService.read({
       skillName: "ask-matt",
@@ -297,6 +321,12 @@ test("v0.3-02: guided workflow follows Matt-style single-session, multi-session 
   });
   assert.equal(afterRestart.workflow.phase, "IMPLEMENT");
   assert.equal(afterRestart.recommendation.skill, "implement");
+
+  const status = await restartedRuntime.workflowService.status({
+    repoPath: project,
+  });
+  assert.equal(status.workflow.phase, "IMPLEMENT");
+  assert.equal(status.recommendation.skill, "implement");
 
   await assert.rejects(
     restartedRuntime.workflowService.advance({

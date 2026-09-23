@@ -531,6 +531,10 @@ export class WorkflowService {
     };
   }
 
+  async status({ repoPath }) {
+    return this.guide({ repoPath });
+  }
+
   #reason(workflow) {
     switch (workflow.phase) {
       case "SETUP":

@@ -19,6 +19,7 @@ const execFileAsync = promisify(execFile);
 const SOURCE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const MAX_SKILL_BYTES = 512 * 1024;
 const MAX_RESOURCE_BYTES = 2 * 1024 * 1024;
+const SKILL_INVOCATION_MODES = new Set(["user", "model"]);
 
 function safeSourceId(value) {
   const sourceId = String(value ?? "").trim().toLowerCase();
@@ -427,6 +428,73 @@ export class SkillService {
       resource_path: path.relative(skillRoot, resolved).split(path.sep).join("/"),
       content,
       available_files: availableFiles,
+    };
+  }
+
+  async invoke({
+    skillName,
+    sourceId,
+    invocationMode = "model",
+    request,
+  }) {
+    const mode = String(invocationMode ?? "model").trim().toLowerCase();
+    if (!SKILL_INVOCATION_MODES.has(mode)) {
+      throw new AgentDockError(
+        "INVALID_SKILL_INVOCATION_MODE",
+        "invocation_mode must be one of: user, model.",
+        { invocation_mode: invocationMode },
+      );
+    }
+
+    const userRequest = String(request ?? "").trim();
+    if (!userRequest) {
+      throw new AgentDockError(
+        "INVALID_SKILL_INVOCATION_REQUEST",
+        "request is required when invoking a skill.",
+      );
+    }
+
+    const skill = await this.#findSkill({ skillName, sourceId });
+    if (skill.disable_model_invocation && mode !== "user") {
+      throw new AgentDockError(
+        "SKILL_USER_INVOCATION_REQUIRED",
+        "This skill is user-invoked and may run only when the human explicitly selected or named it.",
+        {
+          skill_name: skill.name,
+          source_id: skill.source_id,
+          disable_model_invocation: true,
+        },
+      );
+    }
+
+    const resource = await this.read({
+      skillName: skill.name,
+      sourceId: skill.source_id,
+    });
+
+    return {
+      invocation_version: 1,
+      invocation_mode: mode,
+      skill: {
+        source_id: resource.source_id,
+        source_ref: resource.source_ref,
+        source_commit: resource.source_commit,
+        name: resource.name,
+        description: resource.description,
+        category: resource.category,
+        disable_model_invocation: resource.disable_model_invocation,
+      },
+      user_request: userRequest,
+      resource_path: resource.resource_path,
+      instructions: resource.content,
+      available_files: resource.available_files,
+      execution_contract: {
+        reasoning_agent: "chat_model",
+        execution_harness: "AgentDock",
+        server_side_llm: false,
+        executes_skill_server_side: false,
+        skill_repository_trust: "user_supplied_instructions",
+      },
     };
   }
 

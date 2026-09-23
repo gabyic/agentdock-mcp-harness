@@ -80,6 +80,23 @@ When a skill says to invoke or read another skill, the chat model should call
 `skill.read` for that referenced skill and continue reasoning in the chat
 context.
 
+### `skill.invoke`
+
+Provides a stable chat-facing invocation boundary for an installed skill. It
+does **not** execute the skill on the server and does not start another model.
+Instead it returns the exact installed instructions, source provenance, the
+human/model invocation mode, and an execution contract stating that reasoning
+stays in the chat model and deterministic actions stay in AgentDock.
+
+`disable-model-invocation: true` is enforced at this boundary. Such a skill
+(for example `ask-matt`) requires `invocation_mode=user`, and callers should
+set that mode only when the human explicitly named or selected the skill.
+Implicit/model invocation fails closed.
+
+When `repo_path` is supplied through the MCP tool, AgentDock also returns the
+current durable workflow context when one exists. Missing workflow state is
+reported as `NOT_STARTED`; it is not silently created.
+
 ## Matt Pocock compatibility
 
 A typical source installation is:
@@ -168,6 +185,12 @@ It can record:
 
 This is what makes a long Grill/Wayfinder session durable across chat windows.
 Recording any open decision marks the workflow as unsettled.
+
+### `workflow.status`
+
+Read-only alias for the current durable workflow state plus the same
+recommendation produced by `workflow.guide`. It exists as the stable App-facing
+status primitive; it never advances a phase or executes a skill.
 
 ### `workflow.guide`
 
@@ -287,3 +310,5 @@ Guided Development deliberately does not add:
 The product rule remains:
 
 > Skill = instructions. Chat model = brain. AgentDock = hands + durable state.
+> `@AgentDock` is the single App boundary; Matt-style skills remain an internal
+> resource/workflow layer, not a second MCP service.
