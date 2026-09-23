@@ -25,6 +25,8 @@ export const CONFIG_ENV_KEYS = new Set([
   "AGENTDOCK_AUDIT_MAX_ENTRIES",
   "AGENTDOCK_POLICY_JSON",
   "AGENTDOCK_MATT_AUTO_ROUTING",
+  "AGENTDOCK_GUARDED_EXECUTION_MODE",
+  "AGENTDOCK_SANDBOX_BINARY",
   "AGENTDOCK_TRANSPORT",
   "AGENTDOCK_HTTP_HOST",
   "AGENTDOCK_HTTP_PORT",
@@ -110,6 +112,13 @@ const AgentDockConfigSchema = z
       .object({
         matt_auto_routing: z.boolean().default(false),
         router_skill: z.string().min(1).default("ask-matt"),
+      })
+      .strict()
+      .default({}),
+    guarded_execution: z
+      .object({
+        mode: z.enum(["off", "observe", "enforce"]).default("off"),
+        sandbox_binary: z.string().min(1).default("/usr/bin/bwrap"),
       })
       .strict()
       .default({}),
@@ -253,6 +262,10 @@ function defaultLayer(homeDir) {
       matt_auto_routing: false,
       router_skill: "ask-matt",
     },
+    guarded_execution: {
+      mode: "off",
+      sandbox_binary: "/usr/bin/bwrap",
+    },
     transport: {
       mode: "stdio",
       http: {
@@ -318,6 +331,19 @@ function envLayer(env) {
     layer.skills = {
       ...(layer.skills ?? {}),
       matt_auto_routing: mattAutoRouting,
+    };
+  }
+
+  if (env.AGENTDOCK_GUARDED_EXECUTION_MODE) {
+    layer.guarded_execution = {
+      ...(layer.guarded_execution ?? {}),
+      mode: env.AGENTDOCK_GUARDED_EXECUTION_MODE.trim().toLowerCase(),
+    };
+  }
+  if (env.AGENTDOCK_SANDBOX_BINARY) {
+    layer.guarded_execution = {
+      ...(layer.guarded_execution ?? {}),
+      sandbox_binary: env.AGENTDOCK_SANDBOX_BINARY,
     };
   }
 

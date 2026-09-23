@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { AgentDockError } from "./errors.js";
 import { resolveExistingTaskPath } from "./workspace-paths.js";
 
@@ -22,6 +21,7 @@ export class ProcessService {
   #store;
   #approval;
   #audit;
+  #execution;
   #processes = new Map();
   #runtimeId;
   #maxLiveOutputBytes;
@@ -31,6 +31,7 @@ export class ProcessService {
     stateStore,
     approvalService,
     auditService,
+    executionService,
     maxLiveOutputBytes = DEFAULT_LIVE_PROCESS_OUTPUT_BYTES,
   }) {
     if (!Number.isInteger(maxLiveOutputBytes) || maxLiveOutputBytes < 1024) {
@@ -40,6 +41,7 @@ export class ProcessService {
     this.#store = stateStore;
     this.#approval = approvalService;
     this.#audit = auditService;
+    this.#execution = executionService;
     this.#runtimeId = "runtime_" + randomUUID();
     this.#maxLiveOutputBytes = maxLiveOutputBytes;
   }
@@ -161,6 +163,7 @@ export class ProcessService {
       argv: record.argv,
       shell: record.shell,
       cwd: record.cwd,
+      execution_plan: record.execution_plan ?? null,
       env: record.env,
       started_at: record.started_at,
       ended_at: record.ended_at,
@@ -352,14 +355,24 @@ export class ProcessService {
 
     const processId = "proc_" + randomUUID();
     const mode = hasArgv ? "argv" : "shell";
-    const command = hasArgv ? argv[0] : shell;
-    const args = hasArgv ? argv.slice(1) : [];
-    const child = spawn(command, args, {
+    const launched = this.#execution.launch({
+      scope: location.scope,
       cwd: location.resolved,
-      env: { ...process.env, ...env },
-      shell: hasShell,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      argv,
+      shell,
+      env,
+    });
+    const child = launched.child;
+    const executionPlan = launched.plan;
+
+    this.#audit?.append(taskId, {
+      event: "GUARDED_EXECUTION_DECISION",
+      process_id: processId,
+      guarded_mode: executionPlan.guarded_mode,
+      lane: executionPlan.lane,
+      decision: executionPlan.decision,
+      cwd: executionPlan.cwd,
+      sandbox: executionPlan.sandbox,
     });
 
     const record = {
@@ -372,6 +385,7 @@ export class ProcessService {
       shell: hasShell ? shell : undefined,
       cwd: location.resolved,
       cwd_scope: location.scope,
+      execution_plan: executionPlan,
       env: { ...env },
       owner_runtime_id: this.#runtimeId,
       started_at: new Date().toISOString(),

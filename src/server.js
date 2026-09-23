@@ -7,6 +7,7 @@ import { AuditService } from "./audit-service.js";
 import { FileEditService } from "./file-edit-service.js";
 import { FileQueryService } from "./file-query-service.js";
 import { GitService } from "./git-service.js";
+import { ExecutionService } from "./execution-service.js";
 import { PolicyService } from "./policy-service.js";
 import { ProcessService } from "./process-service.js";
 import { SkillService } from "./skill-service.js";
@@ -161,11 +162,16 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     taskService,
     auditService,
   });
+  const executionService = new ExecutionService({
+    mode: resolvedConfig.guarded_execution.mode,
+    sandboxBinary: resolvedConfig.guarded_execution.sandbox_binary,
+  });
   const processService = new ProcessService({
     taskService,
     stateStore,
     approvalService,
     auditService,
+    executionService,
   });
   const skillService = new SkillService({
     stateStore,
@@ -187,6 +193,7 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     approvalService,
     fileQueryService,
     fileEditService,
+    executionService,
     processService,
     skillService,
     workflowService,

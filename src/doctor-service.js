@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { loadAgentDockConfig } from "./config.js";
+import { probeSandboxRuntime } from "./execution-service.js";
 import { AGENTDOCK_VERSION } from "./version.js";
 
 const execFileAsync = promisify(execFile);
@@ -223,6 +224,32 @@ function transportCheck(config) {
   );
 }
 
+function guardedExecutionCheck(config) {
+  const mode = config.guarded_execution.mode;
+  const sandbox = probeSandboxRuntime({
+    binary: config.guarded_execution.sandbox_binary,
+  });
+  const status =
+    mode === "enforce" && !sandbox.ready
+      ? "FAIL"
+      : mode === "observe" && !sandbox.ready
+        ? "WARN"
+        : "PASS";
+  return check(
+    "guarded_execution",
+    status,
+    mode === "off"
+      ? "Guarded Execution is off; legacy execution behavior is preserved."
+      : sandbox.ready
+        ? "Guarded Execution sandbox prerequisite is ready."
+        : "Guarded Execution sandbox prerequisite is not ready.",
+    {
+      mode,
+      sandbox,
+    },
+  );
+}
+
 function policyCheck(config) {
   const count = config.policy.rules.length;
   if (count === 0) {
@@ -312,6 +339,8 @@ function configCheck(result) {
       policy_rule_count: config.policy.rules.length,
       matt_auto_routing: config.skills.matt_auto_routing,
       matt_router_skill: config.skills.router_skill,
+      guarded_execution_mode: config.guarded_execution.mode,
+      sandbox_binary: config.guarded_execution.sandbox_binary,
     },
   );
 }
@@ -352,6 +381,7 @@ export async function runDoctor({
     checks.push(await stateDirectoryCheck(configResult.config));
     checks.push(transportCheck(configResult.config));
     checks.push(policyCheck(configResult.config));
+    checks.push(guardedExecutionCheck(configResult.config));
   } catch (error) {
     checks.push(configFailureCheck(error, configPath));
   }

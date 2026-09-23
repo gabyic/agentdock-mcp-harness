@@ -4,11 +4,11 @@
 
 **Blocked by:** 01: Reconcile the production source baseline
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Existing process callers use one execution interface instead of embedding safety classification themselves.
-- [ ] Relative Task worktree execution classifies as Workspace; intentional host execution classifies as Host.
-- [ ] Off preserves current behavior.
-- [ ] Observe records what enforce would sandbox/confirm/deny without changing execution.
-- [ ] Enforce refuses to start a Workspace sandbox when the configured sandbox runtime is missing or below the supported version.
-- [ ] Doctor reports guarded-execution mode and sandbox readiness.
+- [x] Existing process callers use one execution interface instead of embedding safety classification themselves.
+- [x] Relative Task worktree execution classifies as Workspace; intentional host execution classifies as Host.
+- [x] Off preserves current behavior.
+- [x] Observe records what enforce would sandbox/confirm/deny without changing execution.
+- [x] Enforce refuses to start a Workspace sandbox when the configured sandbox runtime is missing or below the supported version.
+- [x] Doctor reports guarded-execution mode and sandbox readiness.
