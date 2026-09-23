@@ -69,9 +69,16 @@ test("v0.2-01: stdio serves legacy and 2026-07-28 with the same tool surface", a
   const legacyTools = (await legacy.client.listTools()).tools
     .map((tool) => tool.name)
     .sort();
-  const modernTools = (await modern.client.listTools()).tools
+  const modernToolDescriptors = (await modern.client.listTools()).tools;
+  const modernTools = modernToolDescriptors
     .map((tool) => tool.name)
     .sort();
+
+  for (const tool of modernToolDescriptors) {
+    assert.equal(typeof tool.annotations?.readOnlyHint, "boolean", tool.name);
+    assert.equal(typeof tool.annotations?.destructiveHint, "boolean", tool.name);
+    assert.equal(typeof tool.annotations?.openWorldHint, "boolean", tool.name);
+  }
 
   assert.deepEqual(modernTools, legacyTools);
   assert.equal(modernTools.length, 31);

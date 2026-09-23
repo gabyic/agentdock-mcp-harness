@@ -6,6 +6,17 @@ The project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.4.0-dev.1] - 2026-09-23
+
+### Added
+- Public-directory readiness baseline with complete MCP risk annotations for all 31 tools.
+- Tool risk register and directory evaluation pack.
+- v0.4 Wayfinder map and public-submission readiness inventory.
+
+### Changed
+- Server construction now fails closed when a registered tool has no canonical risk profile.
+- Preserved the 31-tool surface; v0.4.0-dev.1 focuses on distribution metadata rather than new execution power.
+
 ## [0.3.0-dev.3] - 2026-09-23
 
 ### Added

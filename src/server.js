@@ -56,6 +56,40 @@ function safe(handler) {
   };
 }
 
+export const TOOL_RISK_PROFILES = Object.freeze({
+  "repo.inspect": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "task.create": { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  "task.resume": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "task.finish": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  "task.cancel": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  "task.cleanup": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  "file.read": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "file.search": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "file.patch": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  "file.write": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  "git.diff": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "git.commit": { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  "audit.get": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "approval.get": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "approval.respond": { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  "process.start": { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  "process.status": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "process.output": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "process.cancel": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  "skill.list": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "skill.search": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "skill.read": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "skill.invoke": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "skill.install": { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  "skill.update": { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  "workflow.start": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  "workflow.list": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "workflow.status": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "workflow.update": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  "workflow.guide": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "workflow.advance": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+});
+
 function registerTool(
   server,
   name,
@@ -66,14 +100,26 @@ function registerTool(
 ) {
   const hasAnnotations = typeof annotationsOrHandler !== "function";
   const handler = hasAnnotations ? maybeHandler : annotationsOrHandler;
-  const annotations = hasAnnotations ? annotationsOrHandler : undefined;
+  const supplementalAnnotations = hasAnnotations ? annotationsOrHandler : {};
+  const riskProfile = TOOL_RISK_PROFILES[name];
+  if (!riskProfile) {
+    throw new AgentDockError(
+      "MISSING_TOOL_RISK_PROFILE",
+      "Every MCP tool must declare a complete directory-review risk profile.",
+      { tool: name },
+    );
+  }
+  const annotations = {
+    ...(supplementalAnnotations ?? {}),
+    ...riskProfile,
+  };
 
   server.registerTool(
     name,
     {
       description,
       inputSchema: z.object(inputShape),
-      ...(annotations ? { annotations } : {}),
+      annotations,
     },
     handler,
   );
@@ -170,7 +216,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     "repo.inspect",
     "Inspect a local Git repository without modifying its working tree.",
     { path: z.string().min(1).describe("Path inside the Git repository") },
-    { readOnlyHint: true },
     safe(async ({ path }) => toolResult(await gitService.inspect(path))),
   );
 
@@ -201,7 +246,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     "task.resume",
     "Resume a durable Task by task_id and return restored process metadata.",
     { task_id: z.string().min(1) },
-    { readOnlyHint: true },
     safe(async ({ task_id }) => {
       const task = taskService.resume(task_id);
       const processes = processService.summariesForTask(task_id);
@@ -223,7 +267,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     "task.finish",
     "Explicitly mark an ACTIVE Task COMPLETED after processes stop and the worktree is committed.",
     { task_id: z.string().min(1) },
-    { destructiveHint: true },
     safe(async ({ task_id }) => {
       const task = taskService.assertActive(task_id);
       const active = processService.activeForTask(task_id);
@@ -261,7 +304,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     "task.cancel",
     "Cancel an ACTIVE Task, best-effort stopping its running processes while preserving the worktree.",
     { task_id: z.string().min(1) },
-    { destructiveHint: true },
     safe(async ({ task_id }) => {
       taskService.assertActive(task_id);
       const cancelledProcesses = processService.cancelAllForTask(task_id);
@@ -286,7 +328,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     "task.cleanup",
     "Remove the worktree of a COMPLETED or CANCELLED Task while preserving durable Task metadata.",
     { task_id: z.string().min(1) },
-    { destructiveHint: true },
     safe(async ({ task_id }) => {
       const active = processService.activeForTask(task_id);
       if (active.length > 0) {
@@ -316,7 +357,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       task_id: z.string().min(1),
       path: z.string().min(1),
     },
-    { readOnlyHint: true },
     safe(async ({ task_id, path }) =>
       toolResult(
         await fileQueryService.read({
@@ -337,7 +377,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       glob: z.string().optional(),
       max_results: z.number().int().min(1).max(1000).optional(),
     },
-    { readOnlyHint: true },
     safe(async ({ task_id, query, path, glob, max_results }) =>
       toolResult(
         await fileQueryService.search({
@@ -405,7 +444,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     "git.diff",
     "Return structured Task worktree changes and unified diff, including untracked files.",
     { task_id: z.string().min(1) },
-    { readOnlyHint: true },
     safe(async ({ task_id }) => {
       const task = taskService.get(task_id);
       return toolResult({
@@ -424,7 +462,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       task_id: z.string().min(1),
       message: z.string().min(1).max(10000),
     },
-    { destructiveHint: true },
     safe(async ({ task_id, message }) => {
       const task = taskService.assertActive(task_id);
       const result = await gitService.commit(task.worktree_path, { message });
@@ -455,7 +492,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       after_sequence: z.number().int().min(0).optional(),
       limit: z.number().int().min(1).max(1000).optional(),
     },
-    { readOnlyHint: true },
     safe(async ({ task_id, after_sequence, limit }) => {
       taskService.get(task_id);
       return toolResult(
@@ -475,7 +511,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       task_id: z.string().min(1),
       approval_id: z.string().min(1),
     },
-    { readOnlyHint: true },
     safe(async ({ task_id, approval_id }) =>
       toolResult(
         approvalService.get({
@@ -540,7 +575,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       task_id: z.string().min(1),
       process_id: z.string().min(1),
     },
-    { readOnlyHint: true },
     safe(async ({ task_id, process_id }) =>
       toolResult(
         processService.status({ taskId: task_id, processId: process_id }),
@@ -556,7 +590,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       process_id: z.string().min(1),
       cursor: z.number().int().min(0).optional(),
     },
-    { readOnlyHint: true },
     safe(async ({ task_id, process_id, cursor }) =>
       toolResult(
         processService.output({
@@ -575,7 +608,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       task_id: z.string().min(1),
       process_id: z.string().min(1),
     },
-    { destructiveHint: true },
     safe(async ({ task_id, process_id }) =>
       toolResult(
         processService.cancel({ taskId: task_id, processId: process_id }),
@@ -590,7 +622,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     {
       source_id: z.string().optional(),
     },
-    { readOnlyHint: true },
     safe(async ({ source_id }) =>
       toolResult(await skillService.list({ sourceId: source_id })),
     ),
@@ -605,7 +636,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       source_id: z.string().optional(),
       limit: z.number().int().min(1).max(50).optional(),
     },
-    { readOnlyHint: true },
     safe(async ({ query, source_id, limit }) =>
       toolResult(
         await skillService.search({
@@ -625,7 +655,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       source_id: z.string().optional(),
       resource_path: z.string().optional(),
     },
-    { readOnlyHint: true },
     safe(async ({ skill_name, source_id, resource_path }) =>
       toolResult(
         await skillService.read({
@@ -647,7 +676,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       source_id: z.string().optional(),
       repo_path: z.string().optional(),
     },
-    { readOnlyHint: true },
     safe(async ({
       skill_name,
       request,
@@ -776,7 +804,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     {
       include_done: z.boolean().optional(),
     },
-    { readOnlyHint: true },
     safe(async ({ include_done }) =>
       toolResult(
         await workflowService.list({
@@ -793,7 +820,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     {
       repo_path: z.string().min(1),
     },
-    { readOnlyHint: true },
     safe(async ({ repo_path }) =>
       toolResult(await workflowService.status({ repoPath: repo_path })),
     ),
@@ -838,7 +864,6 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     {
       repo_path: z.string().min(1),
     },
-    { readOnlyHint: true },
     safe(async ({ repo_path }) =>
       toolResult(await workflowService.guide({ repoPath: repo_path })),
     ),

@@ -454,6 +454,10 @@ it:
 See [docs/guided-development.md](docs/guided-development.md) and
 [docs/roadmap-v0.3.md](docs/roadmap-v0.3.md).
 
+The v0.4 line focuses on ChatGPT public distribution and directory readiness: tool safety metadata, reviewer evals, submission materials, and the unresolved Universal-vs-self-hosted distribution topology.
+
+See [docs/roadmap-v0.4.md](docs/roadmap-v0.4.md) and [docs/plugin/submission-readiness.md](docs/plugin/submission-readiness.md).
+
 ## Non-goals for v0.2
 
 These remain deliberately deferred:
