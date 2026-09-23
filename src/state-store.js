@@ -175,11 +175,11 @@ export class StateStore {
 
   #openSqlite() {
     this.#dbPath = path.join(this.#stateDir, "agentdock.db");
-    this.#db = new DatabaseSync(this.#dbPath);
+    this.#db = new DatabaseSync(this.#dbPath, { timeout: 5000 });
+    this.#db.exec("PRAGMA busy_timeout=5000");
+    this.#db.exec("PRAGMA foreign_keys=ON");
     this.#db.exec("PRAGMA journal_mode=WAL");
     this.#db.exec("PRAGMA synchronous=NORMAL");
-    this.#db.exec("PRAGMA foreign_keys=ON");
-    this.#db.exec("PRAGMA busy_timeout=5000");
     this.#db.exec(
       [
         "CREATE TABLE IF NOT EXISTS state_documents (",
@@ -571,6 +571,7 @@ export class StateStore {
           : record.shell,
       cwd: record.cwd,
       cwd_scope: record.cwd_scope,
+      execution_plan: record.execution_plan ?? null,
       env: redactEnv(record.env),
       owner_runtime_id: record.owner_runtime_id ?? null,
       started_at: record.started_at,
