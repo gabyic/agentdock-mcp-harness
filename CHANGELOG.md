@@ -6,6 +6,24 @@ The project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.3.0-dev.3] - 2026-09-23
+
+### Added
+
+- Auto Matt routing through the existing `skill.invoke` tool using `skill_name="auto"`, so the MCP tool surface remains stable at 31 tools.
+- `AGENTDOCK_MATT_AUTO_ROUTING` / `skills.matt_auto_routing` as an explicit, default-off authorization for model-selected upstream user-invoked Skills.
+- Routing packets containing the installed Ask Matt instructions, installed Skill candidates, and durable workflow context for chat-side selection.
+- `agentdock doctor` visibility for the effective Matt auto-routing mode and router Skill.
+
+### Changed
+
+- User-invoked upstream Skills remain fail-closed by default, but when Auto Matt has been explicitly enabled their model-side invocation is admitted and recorded as `auto_authorized`.
+- `workflow.guide` now directs the chat model into `skill.invoke` for the recommended Skill instead of treating Skill reading as an informal convention.
+
+### Safety
+
+- Auto Matt does not add a server-side LLM, automatic product decisions, approval bypass, or workflow-boundary bypass.
+
 ## [0.3.0-dev.2] - 2026-09-23
 
 ### Added

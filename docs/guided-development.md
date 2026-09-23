@@ -97,6 +97,34 @@ When `repo_path` is supplied through the MCP tool, AgentDock also returns the
 current durable workflow context when one exists. Missing workflow state is
 reported as `NOT_STARTED`; it is not silently created.
 
+## Auto Matt routing
+
+AgentDock can make the installed Matt workflow self-routing without adding a
+second MCP service or a second reasoning model.
+
+When `skills.matt_auto_routing=true`, the normal chat-side sequence is:
+
+```text
+user selects @AgentDock and describes software work
+  -> skill.invoke(skill_name="auto", invocation_mode="model")
+  -> AgentDock returns Ask Matt instructions + installed candidates
+     + durable workflow context
+  -> chat model chooses the matching Skill
+  -> skill.invoke(chosen_skill, invocation_mode="model")
+  -> AgentDock records authorization as auto_authorized when upstream marked
+     that Skill user-invoked
+  -> chat model follows the Skill and uses AgentDock execution tools
+```
+
+The router is advisory to the chat model, not an autonomous server loop.
+`skill.invoke("auto")` never advances workflow state and never executes code.
+Workflow transitions remain explicit and fail closed on unresolved decisions.
+
+This mode is intended to remove the need for users to memorize `/wayfinder`,
+`/grill-with-docs`, `/to-spec`, `/to-tickets`, `/implement`, `/code-review`,
+and the rest of the Matt skill catalog. The human describes the work; the chat
+model selects the method.
+
 ## Matt Pocock compatibility
 
 A typical source installation is:

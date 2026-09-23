@@ -11,6 +11,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
+import { loadAgentDockConfig } from "../src/config.js";
 import { createAgentDockRuntime } from "../src/server.js";
 
 const execFileAsync = promisify(execFile);
@@ -170,6 +171,55 @@ test("v0.3-01: skill resource layer installs, searches and reads Git-backed skil
     }),
     (error) => error?.code === "SKILL_USER_INVOCATION_REQUIRED",
   );
+
+  await assert.rejects(
+    runtime.skillService.invoke({
+      skillName: "auto",
+      sourceId: "mattpocock",
+      invocationMode: "model",
+      request: "Figure out which Matt skill should handle this work.",
+    }),
+    (error) => error?.code === "SKILL_AUTO_ROUTING_NOT_AUTHORIZED",
+  );
+
+  const { config: autoConfig } = loadAgentDockConfig({
+    homeDir: tempRoot,
+    configPath: null,
+    env: {
+      AGENTDOCK_STATE_DIR: stateDir,
+      AGENTDOCK_MATT_AUTO_ROUTING: "true",
+    },
+  });
+  const autoRuntime = createAgentDockRuntime({ config: autoConfig });
+
+  const routed = await autoRuntime.skillService.invoke({
+    skillName: "auto",
+    sourceId: "mattpocock",
+    invocationMode: "model",
+    request: "I do not know the next development step.",
+  });
+  assert.equal(routed.invocation_mode, "model");
+  assert.equal(routed.authorization.mode, "auto_authorized");
+  assert.equal(routed.routing.router_skill, "ask-matt");
+  assert.match(routed.routing.instructions, /Router over the engineering workflow/);
+  assert.equal(
+    routed.routing.candidates.some((skill) => skill.name === "wayfinder"),
+    true,
+  );
+  assert.equal(
+    routed.routing.candidates.some((skill) => skill.name === "implement"),
+    true,
+  );
+
+  const autoInvoked = await autoRuntime.skillService.invoke({
+    skillName: "ask-matt",
+    sourceId: "mattpocock",
+    invocationMode: "model",
+    request: "Route this automatically under the user's Auto Matt authorization.",
+  });
+  assert.equal(autoInvoked.authorization.mode, "auto_authorized");
+  assert.equal(autoInvoked.skill.name, "ask-matt");
+  assert.match(autoInvoked.instructions, /Router over the engineering workflow/);
 
   await assert.rejects(
     runtime.skillService.read({

@@ -23,6 +23,7 @@ export const CONFIG_ENV_KEYS = new Set([
   "AGENTDOCK_PERSISTED_OUTPUT_BYTES",
   "AGENTDOCK_AUDIT_MAX_ENTRIES",
   "AGENTDOCK_POLICY_JSON",
+  "AGENTDOCK_MATT_AUTO_ROUTING",
   "AGENTDOCK_TRANSPORT",
   "AGENTDOCK_HTTP_HOST",
   "AGENTDOCK_HTTP_PORT",
@@ -103,6 +104,13 @@ const AgentDockConfigSchema = z
       })
       .strict()
       .default({}),
+    skills: z
+      .object({
+        matt_auto_routing: z.boolean().default(false),
+        router_skill: z.string().min(1).default("ask-matt"),
+      })
+      .strict()
+      .default({}),
     transport: z
       .object({
         mode: z.enum(["stdio", "http"]).default("stdio"),
@@ -178,6 +186,17 @@ function parseIntegerEnv(value, name) {
   return Number(value);
 }
 
+function parseBooleanEnv(value, name) {
+  if (value === undefined || value === "") return undefined;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw new AgentDockError(
+    "INVALID_CONFIG",
+    name + " must be a boolean (true/false, 1/0, yes/no, on/off).",
+  );
+}
+
 function parseListEnv(value) {
   if (value === undefined || value === "") return undefined;
   const items = value
@@ -227,6 +246,10 @@ function defaultLayer(homeDir) {
     policy: {
       rules: [],
     },
+    skills: {
+      matt_auto_routing: false,
+      router_skill: "ask-matt",
+    },
     transport: {
       mode: "stdio",
       http: {
@@ -275,6 +298,17 @@ function envLayer(env) {
   const policyRules = parsePolicyEnv(env.AGENTDOCK_POLICY_JSON);
   if (policyRules !== undefined) {
     layer.policy = { rules: policyRules };
+  }
+
+  const mattAutoRouting = parseBooleanEnv(
+    env.AGENTDOCK_MATT_AUTO_ROUTING,
+    "AGENTDOCK_MATT_AUTO_ROUTING",
+  );
+  if (mattAutoRouting !== undefined) {
+    layer.skills = {
+      ...(layer.skills ?? {}),
+      matt_auto_routing: mattAutoRouting,
+    };
   }
 
   if (env.AGENTDOCK_TRANSPORT) {

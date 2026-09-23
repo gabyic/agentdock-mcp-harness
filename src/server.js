@@ -119,7 +119,11 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     approvalService,
     auditService,
   });
-  const skillService = new SkillService({ stateStore });
+  const skillService = new SkillService({
+    stateStore,
+    autoRoutingEnabled: resolvedConfig.skills.matt_auto_routing,
+    routerSkillName: resolvedConfig.skills.router_skill,
+  });
   const workflowService = new WorkflowService({
     stateStore,
     skillService,
@@ -635,7 +639,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
   registerTool(
     server,
     "skill.invoke",
-    "Prepare one installed skill for chat-side reasoning without executing it or starting a server-side LLM. Use invocation_mode='user' only when the human explicitly named or selected the skill; user-invoked skills fail closed otherwise. The request is returned with the skill instructions so the chat model can follow them, while AgentDock remains the deterministic execution harness.",
+    "Use this as AgentDock's Matt workflow router and Skill loader for software-engineering work. When the user selected @AgentDock but did not name a Matt skill, proactively call skill.invoke with skill_name=\"auto\", invocation_mode=\"model\", the user's request, and repo_path when known. This returns Ask Matt routing instructions, installed Skill candidates, and durable workflow context; choose the best Skill from that evidence, then call skill.invoke again with the chosen Skill name. Typical routing includes foggy/large work -> wayfinder, repository idea clarification -> grill-with-docs, existing spec/ticket -> implement, hard bug -> diagnosing-bugs, completed change -> code-review, research -> research. Do not start a second server-side LLM, invent product decisions, bypass approvals, or cross unresolved workflow boundaries. User-invoked upstream Skills remain fail-closed unless explicitly named by the human or covered by configured Auto Matt authorization.",
     {
       skill_name: z.string().min(1),
       request: z.string().min(1),
@@ -679,8 +683,22 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
         }
       }
 
+      const routedInvocation =
+        invocation.routing && workflowContext?.recommendation?.skill
+          ? {
+              ...invocation,
+              routing: {
+                ...invocation.routing,
+                workflow_recommended_skill:
+                  workflowContext.recommendation.skill,
+                workflow_recommendation_reason:
+                  workflowContext.recommendation.reason,
+              },
+            }
+          : invocation;
+
       return toolResult({
-        ...invocation,
+        ...routedInvocation,
         workflow_context: workflowContext,
       });
     }),
@@ -816,7 +834,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
   registerTool(
     server,
     "workflow.guide",
-    "Read durable guided-development state and recommend the next workflow skill without executing it. Use this whenever the user says continue, asks what to do next, or says they do not know the next development step; then read the recommended skill and follow it in the chat model.",
+    "Read durable guided-development state and recommend the next workflow skill without executing it. Use this whenever the user says continue, asks what to do next, or says they do not know the next development step. After receiving the recommendation, call skill.invoke with that Skill and the user's current request so the chat model follows the installed Matt instructions under AgentDock's invocation policy.",
     {
       repo_path: z.string().min(1),
     },

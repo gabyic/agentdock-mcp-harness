@@ -310,6 +310,8 @@ function configCheck(result) {
       state_dir: config.state.dir,
       transport_mode: config.transport.mode,
       policy_rule_count: config.policy.rules.length,
+      matt_auto_routing: config.skills.matt_auto_routing,
+      matt_router_skill: config.skills.router_skill,
     },
   );
 }

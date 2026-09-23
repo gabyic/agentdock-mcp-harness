@@ -60,6 +60,10 @@ Example:
       }
     ]
   },
+  "skills": {
+    "matt_auto_routing": false,
+    "router_skill": "ask-matt"
+  },
   "transport": {
     "mode": "stdio",
     "http": {
@@ -171,6 +175,47 @@ Example:
 }
 ```
 
+## Skills
+
+### `skills.matt_auto_routing`
+
+Controls whether the chat model may automatically select and invoke Matt-style
+Skills that upstream marks as user-invoked.
+
+Default:
+
+```text
+false
+```
+
+When disabled, upstream `disable-model-invocation: true` remains fail-closed:
+the human must explicitly name or select that Skill.
+
+When enabled, AgentDock records the effective authorization as
+`auto_authorized`. This is a user-granted routing permission, not a second
+server-side agent. The chat model still performs the reasoning and AgentDock
+still only supplies instructions, durable workflow state, and deterministic
+execution tools.
+
+Auto Matt never grants permission to:
+
+- invent unresolved product decisions;
+- bypass AgentDock approvals or OS permissions;
+- skip durable workflow phase boundaries;
+- execute a Skill as server-side code;
+- start a hidden LLM.
+
+### `skills.router_skill`
+
+Installed Skill used as the routing reference for `skill.invoke` with
+`skill_name="auto"`.
+
+Default:
+
+```text
+ask-matt
+```
+
 ## Transport
 
 ### `transport.mode`
@@ -226,6 +271,7 @@ Existing environment variables remain supported and override the file.
 | `AGENTDOCK_PERSISTED_OUTPUT_BYTES` | `state.persisted_process_output_bytes` |
 | `AGENTDOCK_AUDIT_MAX_ENTRIES` | `audit.max_entries_per_task` |
 | `AGENTDOCK_POLICY_JSON` | `policy.rules` |
+| `AGENTDOCK_MATT_AUTO_ROUTING` | `skills.matt_auto_routing` |
 | `AGENTDOCK_TRANSPORT` | `transport.mode` |
 | `AGENTDOCK_HTTP_HOST` | `transport.http.host` |
 | `AGENTDOCK_HTTP_PORT` | `transport.http.port` |

@@ -437,14 +437,18 @@ chat model to keep track of the software-engineering process as well as execute
 it:
 
 - Git-backed server-side skill resources that remain plain instructions;
-- deterministic `skill.list/search/read/install/update` MCP tools plus an explicit
-  `skill.invoke` gateway for chat-side Skill reasoning;
+- deterministic `skill.list/search/read/install/update` MCP tools plus a
+  `skill.invoke` gateway that supports explicit invocation and Auto Matt routing
+  without adding another MCP tool;
 - durable per-repository workflow state with `workflow.list`, `workflow.status`,
   `workflow.update`, and a `workflow.guide` "what next?" surface;
 - compatibility with Matt Pocock's engineering skills flow, including first-use
   setup, grilling, wayfinding, specs, tickets, implementation and review;
 - one `@AgentDock` App/MCP boundary: Skills and Guided Workflow are internal
   AgentDock layers rather than a second Matt MCP;
+- optional Auto Matt mode: describe the engineering task and let the chat model
+  choose `wayfinder`, `grill-with-docs`, `implement`, `diagnosing-bugs`,
+  `code-review`, or another installed Skill from the upstream routing rules;
 - no server-side LLM and no `skill.execute` agent runtime.
 
 See [docs/guided-development.md](docs/guided-development.md) and

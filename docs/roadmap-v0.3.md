@@ -9,6 +9,8 @@ v0.3 adds guided development without turning AgentDock into a second AI agent.
 - [x] `skill.update` with source commit evidence.
 - [x] `skill.list`, `skill.search`, and supporting-resource `skill.read`.
 - [x] Explicit `skill.invoke` gateway with user-vs-model invocation enforcement and no server-side LLM.
+- [x] Auto Matt routing through `skill.invoke(skill_name="auto")` without expanding the MCP tool surface.
+- [x] Explicit user-granted override for upstream user-invoked Skills, recorded as `auto_authorized` and default-off.
 - [x] Matt Pocock skills repository compatibility.
 - [x] Durable per-repository workflow state.
 - [x] Cross-chat active workflow discovery with `workflow.list`.

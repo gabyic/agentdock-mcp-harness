@@ -168,11 +168,19 @@ export class SkillService {
   #skillsDir;
   #sourcesDir;
   #metadataDir;
+  #autoRoutingEnabled;
+  #routerSkillName;
 
-  constructor({ stateStore }) {
+  constructor({
+    stateStore,
+    autoRoutingEnabled = false,
+    routerSkillName = "ask-matt",
+  }) {
     this.#skillsDir = path.join(stateStore.stateDir, "skills");
     this.#sourcesDir = path.join(this.#skillsDir, "sources");
     this.#metadataDir = path.join(this.#skillsDir, "metadata");
+    this.#autoRoutingEnabled = Boolean(autoRoutingEnabled);
+    this.#routerSkillName = String(routerSkillName || "ask-matt").trim();
   }
 
   async #ensureDirs() {
@@ -454,17 +462,78 @@ export class SkillService {
       );
     }
 
-    const skill = await this.#findSkill({ skillName, sourceId });
-    if (skill.disable_model_invocation && mode !== "user") {
-      throw new AgentDockError(
-        "SKILL_USER_INVOCATION_REQUIRED",
-        "This skill is user-invoked and may run only when the human explicitly selected or named it.",
-        {
-          skill_name: skill.name,
-          source_id: skill.source_id,
-          disable_model_invocation: true,
+    const normalizedSkillName = String(skillName ?? "").trim();
+    if (normalizedSkillName === "auto") {
+      if (!this.#autoRoutingEnabled) {
+        throw new AgentDockError(
+          "SKILL_AUTO_ROUTING_NOT_AUTHORIZED",
+          "Auto Matt routing is disabled. The user must explicitly enable AgentDock Matt auto-routing before model-selected user-invoked skills are allowed.",
+        );
+      }
+
+      const router = await this.read({
+        skillName: this.#routerSkillName,
+        sourceId,
+      });
+      const listed = await this.list({ sourceId });
+      return {
+        invocation_version: 1,
+        invocation_mode: mode,
+        authorization: {
+          mode: "auto_authorized",
+          matt_auto_routing: true,
+          user_invoked_override: true,
         },
-      );
+        user_request: userRequest,
+        routing: {
+          router_skill: router.name,
+          router_source_id: router.source_id,
+          router_source_commit: router.source_commit,
+          instructions: router.content,
+          candidates: listed.skills
+            .filter((skill) => skill.name !== router.name)
+            .map((skill) => ({
+              source_id: skill.source_id,
+              name: skill.name,
+              description: skill.description,
+              category: skill.category,
+              disable_model_invocation: skill.disable_model_invocation,
+            })),
+          next_action:
+            "The chat model must choose the best matching installed skill using these router instructions and the current repository/workflow context, then call skill.invoke again with that skill name. Do not invent product decisions or cross unresolved human phase boundaries.",
+        },
+        execution_contract: {
+          reasoning_agent: "chat_model",
+          execution_harness: "AgentDock",
+          server_side_llm: false,
+          executes_skill_server_side: false,
+          automatic_product_decisions: false,
+          approval_bypass: false,
+          workflow_boundary_bypass: false,
+          skill_repository_trust: "user_supplied_instructions",
+        },
+      };
+    }
+
+    const skill = await this.#findSkill({
+      skillName: normalizedSkillName,
+      sourceId,
+    });
+    let authorizationMode = mode === "user" ? "explicit_user" : "model";
+    if (skill.disable_model_invocation && mode !== "user") {
+      if (!this.#autoRoutingEnabled) {
+        throw new AgentDockError(
+          "SKILL_USER_INVOCATION_REQUIRED",
+          "This skill is user-invoked and may run only when the human explicitly selected or named it, unless Matt auto-routing has been explicitly enabled.",
+          {
+            skill_name: skill.name,
+            source_id: skill.source_id,
+            disable_model_invocation: true,
+            matt_auto_routing: false,
+          },
+        );
+      }
+      authorizationMode = "auto_authorized";
     }
 
     const resource = await this.read({
@@ -475,6 +544,12 @@ export class SkillService {
     return {
       invocation_version: 1,
       invocation_mode: mode,
+      authorization: {
+        mode: authorizationMode,
+        matt_auto_routing: this.#autoRoutingEnabled,
+        user_invoked_override:
+          skill.disable_model_invocation && authorizationMode === "auto_authorized",
+      },
       skill: {
         source_id: resource.source_id,
         source_ref: resource.source_ref,
@@ -493,6 +568,9 @@ export class SkillService {
         execution_harness: "AgentDock",
         server_side_llm: false,
         executes_skill_server_side: false,
+        automatic_product_decisions: false,
+        approval_bypass: false,
+        workflow_boundary_bypass: false,
         skill_repository_trust: "user_supplied_instructions",
       },
     };

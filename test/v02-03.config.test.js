@@ -136,6 +136,7 @@ test("v0.2-03: config precedence is defaults < file < env < programmatic overrid
   assert.equal(config.transport.mode, "http");
   assert.equal(config.transport.http.port, 3400);
   assert.equal(config.transport.http.path, "/from-file");
+  assert.equal(config.skills.matt_auto_routing, false);
   assert.deepEqual(config.transport.http.allowed_hosts, ["file.local"]);
   assert.deepEqual(config.transport.http.allowed_origins, ["file.local"]);
 
@@ -508,4 +509,53 @@ test("v0.2-03: main entrypoint follows transport.mode from config file", async (
   assert.equal(code, 0);
   assert.equal(signal, null);
   assert.equal(exited, true);
+});
+
+
+test("v0.3: Matt auto-routing config is explicit, defaults off, and accepts boolean env values", async (t) => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agentdock-v03-auto-matt-"));
+  const stateDir = path.join(tempRoot, "state");
+
+  t.after(async () => {
+    await rm(tempRoot, { recursive: true, force: true });
+  });
+
+  const disabled = loadAgentDockConfig({
+    homeDir: tempRoot,
+    configPath: null,
+    env: {
+      AGENTDOCK_STATE_DIR: stateDir,
+    },
+  });
+  assert.equal(disabled.config.skills.matt_auto_routing, false);
+
+  const enabled = loadAgentDockConfig({
+    homeDir: tempRoot,
+    configPath: null,
+    env: {
+      AGENTDOCK_STATE_DIR: stateDir,
+      AGENTDOCK_MATT_AUTO_ROUTING: "true",
+    },
+  });
+  assert.equal(enabled.config.skills.matt_auto_routing, true);
+  assert.equal(
+    enabled.metadata.env_overrides.includes("AGENTDOCK_MATT_AUTO_ROUTING"),
+    true,
+  );
+
+  assert.throws(
+    () =>
+      loadAgentDockConfig({
+        homeDir: tempRoot,
+        configPath: null,
+        env: {
+          AGENTDOCK_STATE_DIR: stateDir,
+          AGENTDOCK_MATT_AUTO_ROUTING: "maybe",
+        },
+      }),
+    (error) =>
+      error instanceof AgentDockError &&
+      error.code === "INVALID_CONFIG" &&
+      /AGENTDOCK_MATT_AUTO_ROUTING/.test(error.message),
+  );
 });

@@ -156,6 +156,8 @@ test("v0.2-04: doctor CLI emits parseable JSON and exits zero for warnings", asy
   assert.equal(configCheck.details.config_path, configPath);
   assert.equal(configCheck.details.config_file_loaded, true);
   assert.equal(configCheck.details.policy_rule_count, 1);
+  assert.equal(configCheck.details.matt_auto_routing, false);
+  assert.equal(configCheck.details.matt_router_skill, "ask-matt");
 });
 
 test("v0.2-04: invalid config produces a FAIL report and exit code 1 without leaking config contents", async (t) => {
