@@ -85,11 +85,22 @@ export class TaskService {
     return task;
   }
 
-  finish(taskId, { finalCommitSha }) {
+  finish(
+    taskId,
+    {
+      finalCommitSha,
+      outcome,
+      outcomeReason = null,
+      retentionRef = null,
+    },
+  ) {
     const task = this.assertActive(taskId);
     const now = new Date().toISOString();
     task.status = "COMPLETED";
     task.final_commit_sha = finalCommitSha;
+    task.outcome = outcome;
+    task.outcome_reason = outcomeReason;
+    task.retention_ref = retentionRef;
     task.finished_at = now;
     task.updated_at = now;
     task.approval_grants = [];
@@ -128,6 +139,27 @@ export class TaskService {
         "Task must be COMPLETED or CANCELLED before cleanup.",
         { status: task.status },
       );
+    }
+
+    if (
+      task.status === "COMPLETED" &&
+      task.outcome === "COMMIT"
+    ) {
+      if (!task.retention_ref || !task.final_commit_sha) {
+        throw new AgentDockError(
+          "TASK_COMMIT_NOT_RETAINED",
+          "Task cleanup refused because completed commit evidence is incomplete.",
+          {
+            retention_ref: task.retention_ref ?? null,
+            final_commit_sha: task.final_commit_sha ?? null,
+          },
+        );
+      }
+      await this.#git.assertRetainedTaskCommit({
+        repoRoot: task.source_repo,
+        ref: task.retention_ref,
+        commitSha: task.final_commit_sha,
+      });
     }
 
     if (existsSync(task.worktree_path)) {
@@ -172,6 +204,9 @@ export class TaskService {
       approvals: [],
       approval_grants: [],
       final_commit_sha: null,
+      outcome: null,
+      outcome_reason: null,
+      retention_ref: null,
       workspace_cleaned: false,
       created_at: now,
       updated_at: now,

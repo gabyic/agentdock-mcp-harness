@@ -4,10 +4,10 @@
 
 **Blocked by:** 01: Reconcile the production source baseline
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] COMMIT completion anchors the final commit under an AgentDock-owned durable Git ref before the Task becomes COMPLETED.
-- [ ] Worktree cleanup preserves the durable ref and a forced reflog expiry/Git GC cannot remove the final commit.
-- [ ] NO_CHANGE is a first-class completion outcome and requires a non-empty reason/evidence.
-- [ ] An untouched Task cannot claim a COMMIT outcome without commit evidence.
-- [ ] Existing cancel/cleanup behavior remains compatible.
+- [x] COMMIT completion anchors the final commit under an AgentDock-owned durable Git ref before the Task becomes COMPLETED.
+- [x] Worktree cleanup preserves the durable ref and a forced reflog expiry/Git GC cannot remove the final commit.
+- [x] NO_CHANGE is a first-class completion outcome and requires a non-empty reason/evidence.
+- [x] An untouched Task cannot claim a COMMIT outcome without commit evidence.
+- [x] Existing cancel/cleanup behavior remains compatible.

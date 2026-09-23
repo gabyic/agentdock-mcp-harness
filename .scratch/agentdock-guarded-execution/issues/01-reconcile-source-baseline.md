@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The feature branch contains both sides of the current local-main/origin-main divergence without dropping either change set.
-- [ ] Release-hardening tests remain green after reconciliation.
-- [ ] Guarded Execution is documented as disabled by default during implementation.
-- [ ] Full existing test suite remains green.
+- [x] The feature branch contains both sides of the current local-main/origin-main divergence without dropping either change set.
+- [x] Release-hardening tests remain green after reconciliation.
+- [x] Guarded Execution is documented as disabled by default during implementation.
+- [x] Full existing test suite remains green.
