@@ -4,10 +4,10 @@
 
 **Blocked by:** 01: Reconcile the production source baseline
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] SQLite uses WAL, foreign keys, busy timeout, and explicit schema migrations.
-- [ ] Existing JSON state can be imported idempotently without deleting legacy files.
-- [ ] Two independent Node processes can update the same logical record without lost updates.
-- [ ] The state backend is selectable and the production default remains unchanged during expansion.
-- [ ] No new npm database dependency is added.
+- [x] SQLite uses WAL, foreign keys, busy timeout, and explicit schema migrations.
+- [x] Existing JSON state can be imported idempotently without deleting legacy files.
+- [x] Two independent Node processes can update the same logical record without lost updates.
+- [x] The state backend is selectable and the production default remains unchanged during expansion.
+- [x] No new npm database dependency is added.

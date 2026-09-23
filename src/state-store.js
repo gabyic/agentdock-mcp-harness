@@ -2,16 +2,22 @@ import {
   chmodSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
+import { AgentDockError } from "./errors.js";
 import { redactEnv } from "./redaction.js";
 import {
   DEFAULT_PERSISTED_PROCESS_OUTPUT_BYTES,
   DEFAULT_STATE_RELATIVE_PATH,
 } from "./config.js";
+
+const SQLITE_SCHEMA_VERSION = 1;
+const DOCUMENT_PART_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 function persistedOutput(record, maxPersistedOutputBytes) {
   const chunks = record.output ?? [];
@@ -36,7 +42,9 @@ function persistedOutput(record, maxPersistedOutputBytes) {
     const remaining = maxPersistedOutputBytes - bytes;
     if (remaining > 0) {
       const buffer = Buffer.from(text, "utf8");
-      const tail = buffer.subarray(Math.max(0, buffer.length - remaining)).toString("utf8");
+      const tail = buffer
+        .subarray(Math.max(0, buffer.length - remaining))
+        .toString("utf8");
       kept.push({
         cursor: chunk.cursor,
         stream: chunk.stream,
@@ -64,15 +72,39 @@ function persistedOutput(record, maxPersistedOutputBytes) {
   };
 }
 
+function safeDocumentPart(value, field) {
+  const normalized = String(value ?? "").trim();
+  if (!DOCUMENT_PART_PATTERN.test(normalized)) {
+    throw new AgentDockError(
+      "INVALID_STATE_DOCUMENT_KEY",
+      field + " contains unsupported characters.",
+      { [field]: normalized },
+    );
+  }
+  return normalized;
+}
+
+function cloneJson(value) {
+  return value === undefined
+    ? undefined
+    : JSON.parse(JSON.stringify(value));
+}
+
 export class StateStore {
   #stateDir;
   #tasksDir;
   #processesDir;
   #auditsDir;
+  #documentsDir;
   #maxPersistedOutputBytes;
+  #backend;
+  #db = null;
+  #dbPath = null;
+  #closed = false;
 
   constructor({
     stateDir = path.join(os.homedir(), DEFAULT_STATE_RELATIVE_PATH),
+    backend = "json",
     maxPersistedOutputBytes = DEFAULT_PERSISTED_PROCESS_OUTPUT_BYTES,
   } = {}) {
     if (
@@ -83,26 +115,97 @@ export class StateStore {
         "maxPersistedOutputBytes must be an integer >= 1024.",
       );
     }
+    if (!["json", "sqlite"].includes(backend)) {
+      throw new AgentDockError(
+        "INVALID_STATE_BACKEND",
+        "State backend must be json or sqlite.",
+        { backend },
+      );
+    }
 
     this.#stateDir = stateDir;
+    this.#backend = backend;
     this.#maxPersistedOutputBytes = maxPersistedOutputBytes;
     this.#tasksDir = path.join(this.#stateDir, "tasks");
     this.#processesDir = path.join(this.#stateDir, "processes");
     this.#auditsDir = path.join(this.#stateDir, "audits");
+    this.#documentsDir = path.join(this.#stateDir, "documents");
 
     mkdirSync(this.#stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.#stateDir, 0o700);
     mkdirSync(this.#tasksDir, { recursive: true, mode: 0o700 });
     mkdirSync(this.#processesDir, { recursive: true, mode: 0o700 });
     mkdirSync(this.#auditsDir, { recursive: true, mode: 0o700 });
+
+    if (this.#backend === "sqlite") {
+      this.#openSqlite();
+      this.importLegacyJson();
+    }
   }
 
   get stateDir() {
     return this.#stateDir;
   }
 
+  get backend() {
+    return this.#backend;
+  }
+
   get maxPersistedOutputBytes() {
     return this.#maxPersistedOutputBytes;
+  }
+
+  get databasePath() {
+    return this.#dbPath;
+  }
+
+  #assertOpen() {
+    if (this.#closed) {
+      throw new AgentDockError(
+        "STATE_STORE_CLOSED",
+        "StateStore is already closed.",
+      );
+    }
+  }
+
+  #openSqlite() {
+    this.#dbPath = path.join(this.#stateDir, "agentdock.db");
+    this.#db = new DatabaseSync(this.#dbPath);
+    this.#db.exec("PRAGMA journal_mode=WAL");
+    this.#db.exec("PRAGMA synchronous=NORMAL");
+    this.#db.exec("PRAGMA foreign_keys=ON");
+    this.#db.exec("PRAGMA busy_timeout=5000");
+    this.#db.exec(
+      [
+        "CREATE TABLE IF NOT EXISTS state_documents (",
+        "  kind TEXT NOT NULL,",
+        "  id TEXT NOT NULL,",
+        "  value_json TEXT NOT NULL,",
+        "  revision INTEGER NOT NULL DEFAULT 1,",
+        "  updated_at TEXT NOT NULL,",
+        "  PRIMARY KEY (kind, id)",
+        ")",
+      ].join("\n"),
+    );
+
+    const row = this.#db.prepare("PRAGMA user_version").get();
+    const version = Number(row?.user_version ?? 0);
+    if (version > SQLITE_SCHEMA_VERSION) {
+      this.#db.close();
+      this.#db = null;
+      throw new AgentDockError(
+        "STATE_SCHEMA_TOO_NEW",
+        "AgentDock state database was created by a newer schema version.",
+        {
+          database_version: version,
+          supported_version: SQLITE_SCHEMA_VERSION,
+        },
+      );
+    }
+    if (version < SQLITE_SCHEMA_VERSION) {
+      this.#db.exec("PRAGMA user_version=" + SQLITE_SCHEMA_VERSION);
+    }
+    chmodSync(this.#dbPath, 0o600);
   }
 
   #readJson(filePath) {
@@ -117,6 +220,7 @@ export class StateStore {
   }
 
   #writeJson(filePath, value) {
+    mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
     const tempPath =
       filePath +
       ".tmp-" +
@@ -133,6 +237,215 @@ export class StateStore {
     renameSync(tempPath, filePath);
   }
 
+  #documentPath(kind, id) {
+    const safeKind = safeDocumentPart(kind, "kind");
+    const safeId = safeDocumentPart(id, "id");
+    return path.join(this.#documentsDir, safeKind, safeId + ".json");
+  }
+
+  loadDocument(kind, id) {
+    this.#assertOpen();
+    const safeKind = safeDocumentPart(kind, "kind");
+    const safeId = safeDocumentPart(id, "id");
+
+    if (this.#backend === "sqlite") {
+      const row = this.#db
+        .prepare(
+          "SELECT value_json FROM state_documents WHERE kind = ? AND id = ?",
+        )
+        .get(safeKind, safeId);
+      return row ? JSON.parse(row.value_json) : null;
+    }
+
+    return this.#readJson(this.#documentPath(safeKind, safeId));
+  }
+
+  saveDocument(kind, id, value) {
+    this.#assertOpen();
+    const safeKind = safeDocumentPart(kind, "kind");
+    const safeId = safeDocumentPart(id, "id");
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) {
+      throw new AgentDockError(
+        "INVALID_STATE_DOCUMENT",
+        "State documents must be JSON-serializable.",
+      );
+    }
+
+    if (this.#backend === "sqlite") {
+      const now = new Date().toISOString();
+      this.#db
+        .prepare(
+          [
+            "INSERT INTO state_documents(kind, id, value_json, revision, updated_at)",
+            "VALUES (?, ?, ?, 1, ?)",
+            "ON CONFLICT(kind, id) DO UPDATE SET",
+            "  value_json = excluded.value_json,",
+            "  revision = state_documents.revision + 1,",
+            "  updated_at = excluded.updated_at",
+          ].join("\n"),
+        )
+        .run(safeKind, safeId, serialized, now);
+      return value;
+    }
+
+    this.#writeJson(this.#documentPath(safeKind, safeId), value);
+    return value;
+  }
+
+  mutateDocument(
+    kind,
+    id,
+    mutator,
+    { defaultValue = null } = {},
+  ) {
+    this.#assertOpen();
+    if (typeof mutator !== "function") {
+      throw new TypeError("mutator must be a function.");
+    }
+
+    const safeKind = safeDocumentPart(kind, "kind");
+    const safeId = safeDocumentPart(id, "id");
+
+    if (this.#backend !== "sqlite") {
+      const current =
+        this.loadDocument(safeKind, safeId) ?? cloneJson(defaultValue);
+      const next = mutator(cloneJson(current));
+      if (next === undefined) {
+        throw new AgentDockError(
+          "INVALID_STATE_MUTATION",
+          "State mutation must return a JSON value.",
+        );
+      }
+      this.saveDocument(safeKind, safeId, next);
+      return next;
+    }
+
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.#db
+        .prepare(
+          [
+            "SELECT value_json FROM state_documents",
+            "WHERE kind = ? AND id = ?",
+          ].join("\n"),
+        )
+        .get(safeKind, safeId);
+      const current = row
+        ? JSON.parse(row.value_json)
+        : cloneJson(defaultValue);
+      const next = mutator(cloneJson(current));
+      const serialized = JSON.stringify(next);
+      if (serialized === undefined) {
+        throw new AgentDockError(
+          "INVALID_STATE_MUTATION",
+          "State mutation must return a JSON value.",
+        );
+      }
+      const now = new Date().toISOString();
+      this.#db
+        .prepare(
+          [
+            "INSERT INTO state_documents(kind, id, value_json, revision, updated_at)",
+            "VALUES (?, ?, ?, 1, ?)",
+            "ON CONFLICT(kind, id) DO UPDATE SET",
+            "  value_json = excluded.value_json,",
+            "  revision = state_documents.revision + 1,",
+            "  updated_at = excluded.updated_at",
+          ].join("\n"),
+        )
+        .run(safeKind, safeId, serialized, now);
+      this.#db.exec("COMMIT");
+      return next;
+    } catch (error) {
+      try {
+        this.#db.exec("ROLLBACK");
+      } catch {
+        // Preserve the original mutation error.
+      }
+      throw error;
+    }
+  }
+
+  #importDirectory(kind, directory) {
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === "ENOENT") return 0;
+      throw error;
+    }
+
+    const insert = this.#db.prepare(
+      [
+        "INSERT OR IGNORE INTO state_documents",
+        "(kind, id, value_json, revision, updated_at)",
+        "VALUES (?, ?, ?, 1, ?)",
+      ].join("\n"),
+    );
+    let imported = 0;
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const id = entry.name.slice(0, -".json".length);
+      if (!DOCUMENT_PART_PATTERN.test(id)) continue;
+      const filePath = path.join(directory, entry.name);
+      const value = this.#readJson(filePath);
+      if (value === null) continue;
+      const result = insert.run(
+        kind,
+        id,
+        JSON.stringify(value),
+        new Date().toISOString(),
+      );
+      if (Number(result.changes ?? 0) > 0) imported += 1;
+    }
+    return imported;
+  }
+
+  importLegacyJson() {
+    this.#assertOpen();
+    if (this.#backend !== "sqlite") {
+      return { imported: 0, backend: this.#backend };
+    }
+
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      let imported = 0;
+      imported += this.#importDirectory("task", this.#tasksDir);
+      imported += this.#importDirectory("process", this.#processesDir);
+      imported += this.#importDirectory("audit", this.#auditsDir);
+      imported += this.#importDirectory(
+        "workflow",
+        path.join(this.#stateDir, "workflows"),
+      );
+      this.#db.exec("COMMIT");
+      return { imported, backend: this.#backend };
+    } catch (error) {
+      try {
+        this.#db.exec("ROLLBACK");
+      } catch {
+        // Preserve the original import error.
+      }
+      throw error;
+    }
+  }
+
+  integrityCheck() {
+    this.#assertOpen();
+    if (this.#backend !== "sqlite") return null;
+    const row = this.#db.prepare("PRAGMA integrity_check").get();
+    return row?.integrity_check ?? null;
+  }
+
+  close() {
+    if (this.#closed) return;
+    this.#closed = true;
+    if (this.#db) {
+      this.#db.close();
+      this.#db = null;
+    }
+  }
+
   taskPath(taskId) {
     return path.join(this.#tasksDir, taskId + ".json");
   }
@@ -146,14 +459,24 @@ export class StateStore {
   }
 
   loadTask(taskId) {
+    if (this.#backend === "sqlite") {
+      return this.loadDocument("task", taskId);
+    }
     return this.#readJson(this.taskPath(taskId));
   }
 
   saveTask(task) {
+    if (this.#backend === "sqlite") {
+      return this.saveDocument("task", task.task_id, task);
+    }
     this.#writeJson(this.taskPath(task.task_id), task);
+    return task;
   }
 
   loadProcess(processId) {
+    if (this.#backend === "sqlite") {
+      return this.loadDocument("process", processId);
+    }
     return this.#readJson(this.processPath(processId));
   }
 
@@ -180,11 +503,21 @@ export class StateStore {
       cancel_requested: record.cancel_requested,
       ...outputState,
     };
-    this.#writeJson(this.processPath(record.process_id), serializable);
+
+    if (this.#backend === "sqlite") {
+      this.saveDocument("process", record.process_id, serializable);
+    } else {
+      this.#writeJson(this.processPath(record.process_id), serializable);
+    }
+    return serializable;
   }
 
   loadAudit(taskId) {
-    return this.#readJson(this.auditPath(taskId)) ?? {
+    const loaded =
+      this.#backend === "sqlite"
+        ? this.loadDocument("audit", taskId)
+        : this.#readJson(this.auditPath(taskId));
+    return loaded ?? {
       task_id: taskId,
       next_sequence: 1,
       entries: [],
@@ -192,6 +525,10 @@ export class StateStore {
   }
 
   saveAudit(taskId, value) {
+    if (this.#backend === "sqlite") {
+      return this.saveDocument("audit", taskId, value);
+    }
     this.#writeJson(this.auditPath(taskId), value);
+    return value;
   }
 }
