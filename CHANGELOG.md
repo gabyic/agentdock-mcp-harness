@@ -6,6 +6,26 @@ The project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.4.0-dev.2] - 2026-09-23
+
+### Added
+- Guarded Execution with Workspace/Host lanes, off/observe/enforce rollout modes, Bubblewrap sandboxing, and MCP-native Host confirmation.
+- Optional transactional SQLite durable state using built-in node:sqlite.
+- Durable Task COMMIT/NO_CHANGE outcomes and AgentDock-owned Git retention refs.
+- Evidence-gated Guided Workflow implementation/review completion.
+- task.list plus bounded/redacted process-state hygiene.
+
+### Changed
+- Durable Task, Approval, Audit, Workflow, and Process metadata mutations use the StateStore seam.
+- Process output is bounded in live memory and durable previews are redacted.
+- MCP tool surface is now 32 tools because task.list is part of durable Task hygiene.
+- Guarded Execution and SQLite remain opt-in; production defaults stay json/off.
+
+### Safety
+- Enforce fails closed when the sandbox runtime is missing or below the minimum supported Bubblewrap version.
+- Host process and absolute host file mutations use MCP input_required confirmation in enforce mode, with explicit Policy-backed legacy compatibility.
+- No production enforcement or SQLite migration is performed automatically.
+
 ## [0.4.0-dev.1] - 2026-09-23
 
 ### Added

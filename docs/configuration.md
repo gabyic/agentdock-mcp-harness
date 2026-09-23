@@ -44,6 +44,7 @@ Example:
   "version": 1,
   "state": {
     "dir": "~/.local/state/agentdock",
+    "backend": "json",
     "persisted_process_output_bytes": 65536
   },
   "audit": {
@@ -63,6 +64,12 @@ Example:
   "skills": {
     "matt_auto_routing": false,
     "router_skill": "ask-matt"
+  },
+  "guarded_execution": {
+    "mode": "off",
+    "sandbox_binary": "/usr/bin/bwrap",
+    "sandbox_network": "deny",
+    "hidden_paths": []
   },
   "transport": {
     "mode": "stdio",
@@ -104,6 +111,10 @@ Default:
 ```text
 ~/.local/state/agentdock
 ```
+
+### `state.backend`
+
+Selects the canonical durable mutable-state backend. Supported values are `json` and `sqlite`; default is `json`. SQLite uses Node built-in `node:sqlite` with WAL, transactions, schema versioning, and idempotent legacy JSON import. Legacy JSON becomes import input rather than a second writable source of truth. See [guarded-execution.md](guarded-execution.md) for migration and rollback.
 
 ### `state.persisted_process_output_bytes`
 
@@ -216,6 +227,10 @@ Default:
 ask-matt
 ```
 
+## Guarded Execution
+
+`guarded_execution.mode` controls the boundary: `off` preserves legacy execution, `observe` records `would_sandbox` / `would_confirm` without changing behavior, and `enforce` sandboxes Workspace processes and requires explicit Host confirmation. Default is `off`. `guarded_execution.sandbox_binary` defaults to `/usr/bin/bwrap`; `sandbox_network` defaults to `deny`; `hidden_paths` lists host paths hidden from Workspace processes. Enforce fails closed unless Bubblewrap meets the supported security minimum. See [guarded-execution.md](guarded-execution.md).
+
 ## Transport
 
 ### `transport.mode`
@@ -268,10 +283,15 @@ Existing environment variables remain supported and override the file.
 | --- | --- |
 | `AGENTDOCK_CONFIG` | selects config file |
 | `AGENTDOCK_STATE_DIR` | `state.dir` |
+| `AGENTDOCK_STATE_BACKEND` | `state.backend` |
 | `AGENTDOCK_PERSISTED_OUTPUT_BYTES` | `state.persisted_process_output_bytes` |
 | `AGENTDOCK_AUDIT_MAX_ENTRIES` | `audit.max_entries_per_task` |
 | `AGENTDOCK_POLICY_JSON` | `policy.rules` |
 | `AGENTDOCK_MATT_AUTO_ROUTING` | `skills.matt_auto_routing` |
+| `AGENTDOCK_GUARDED_EXECUTION_MODE` | `guarded_execution.mode` |
+| `AGENTDOCK_SANDBOX_BINARY` | `guarded_execution.sandbox_binary` |
+| `AGENTDOCK_SANDBOX_NETWORK` | `guarded_execution.sandbox_network` |
+| `AGENTDOCK_SANDBOX_HIDDEN_PATHS` | `guarded_execution.hidden_paths` |
 | `AGENTDOCK_TRANSPORT` | `transport.mode` |
 | `AGENTDOCK_HTTP_HOST` | `transport.http.host` |
 | `AGENTDOCK_HTTP_PORT` | `transport.http.port` |
@@ -280,7 +300,7 @@ Existing environment variables remain supported and override the file.
 | `AGENTDOCK_HTTP_ALLOWED_HOSTS` | `transport.http.allowed_hosts` |
 | `AGENTDOCK_HTTP_ALLOWED_ORIGINS` | `transport.http.allowed_origins` |
 
-Host/origin environment lists are comma-separated.
+Host/origin and sandbox hidden-path environment lists are comma-separated.
 
 Example:
 

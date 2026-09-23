@@ -209,3 +209,8 @@ Rules are deterministic. They do not invoke an AI model.
 - [ ] source repositories backed up normally
 - [ ] secrets not stored in repository
 - [ ] dependency/security updates monitored
+
+
+## Guarded Execution rollout
+
+AgentDock `0.4.0-dev.2` keeps `AGENTDOCK_STATE_BACKEND=json` and `AGENTDOCK_GUARDED_EXECUTION_MODE=off` as production-safe defaults. Upgrade code first without changing either value. Then validate existing workflows, move Guarded Execution to `observe`, upgrade Bubblewrap until `agentdock doctor` reports sandbox readiness, migrate durable state to SQLite in a maintenance window after a full state-directory backup, validate MCP human confirmation with the actual client, and only then make a separate decision about `enforce`. Do not switch a live SQLite-backed deployment back to JSON without restoring the pre-migration backup. See [guarded-execution.md](guarded-execution.md).

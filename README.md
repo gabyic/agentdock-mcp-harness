@@ -454,9 +454,9 @@ it:
 See [docs/guided-development.md](docs/guided-development.md) and
 [docs/roadmap-v0.3.md](docs/roadmap-v0.3.md).
 
-The v0.4 line focuses on ChatGPT public distribution and directory readiness: tool safety metadata, reviewer evals, submission materials, and the unresolved Universal-vs-self-hosted distribution topology.
+The v0.4 line also contains **Guarded Execution** hardening derived from the production audit: durable Git Task refs, optional transactional SQLite state, bounded/redacted process state, evidence-gated Guided Workflow, and a Workspace-sandbox / Host-confirmation execution seam. Production enforcement remains opt-in and is never enabled automatically.
 
-See [docs/roadmap-v0.4.md](docs/roadmap-v0.4.md) and [docs/plugin/submission-readiness.md](docs/plugin/submission-readiness.md).
+See [docs/guarded-execution.md](docs/guarded-execution.md), [docs/roadmap-v0.4.md](docs/roadmap-v0.4.md), and [docs/plugin/submission-readiness.md](docs/plugin/submission-readiness.md).
 
 ## Non-goals for v0.2
 

@@ -152,3 +152,8 @@ Overall: WARN
 [PASS] transport — Transport is stdio.
 [PASS] policy — Policy configuration is valid.
 ```
+
+
+## Guarded Execution diagnostics
+
+`agentdock doctor` reports the effective Guarded Execution mode and sandbox readiness. In `off`, the result is informational; in `observe`, an unavailable or unsafe sandbox is a warning because execution remains legacy; in `enforce`, an unavailable or below-minimum sandbox is a failure. The report includes the configured sandbox binary, detected Bubblewrap version, and minimum supported version.
