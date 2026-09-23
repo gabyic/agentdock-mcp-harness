@@ -14,6 +14,21 @@ function fingerprintOperation(value) {
     .digest("hex");
 }
 
+function ensureApprovalState(task) {
+  task.approvals ??= [];
+  task.approval_grants ??= [];
+}
+
+function assertTaskActive(task) {
+  if (task.status !== "ACTIVE" || task.workspace_cleaned) {
+    throw new AgentDockError(
+      "TASK_NOT_ACTIVE",
+      "Approval changes require an ACTIVE Task.",
+      { status: task.status },
+    );
+  }
+}
+
 export class ApprovalService {
   #tasks;
   #policy;
@@ -25,20 +40,7 @@ export class ApprovalService {
     this.#audit = auditService;
   }
 
-  #ensureState(task) {
-    task.approvals ??= [];
-    task.approval_grants ??= [];
-  }
-
-  #persist(task) {
-    task.updated_at = new Date().toISOString();
-    this.#tasks.save(task);
-  }
-
   authorize({ taskId, tool, shell, argv, cwd, env = {} }) {
-    const task = this.#tasks.get(taskId);
-    this.#ensureState(task);
-
     const policy = this.#policy.evaluate({ tool, shell, argv });
     if (policy.effect === "allow") {
       return { allowed: true, policy };
@@ -71,90 +73,116 @@ export class ApprovalService {
     };
     const fingerprint = fingerprintOperation(fingerprintPayload);
 
-    const taskGrant = task.approval_grants.find(
-      (grant) =>
-        grant.kind === "ALLOW_TASK" &&
-        grant.approval_scope === policy.approval_scope,
-    );
-    if (taskGrant) {
-      return {
-        allowed: true,
-        policy,
-        grant: taskGrant,
-      };
-    }
+    const mutation = this.#tasks.mutate(taskId, (task) => {
+      ensureApprovalState(task);
+      assertTaskActive(task);
 
-    const onceIndex = task.approval_grants.findIndex(
-      (grant) =>
-        grant.kind === "ALLOW_ONCE" &&
-        grant.fingerprint === fingerprint &&
-        grant.approval_scope === policy.approval_scope,
-    );
-    if (onceIndex !== -1) {
-      const [grant] = task.approval_grants.splice(onceIndex, 1);
-      this.#persist(task);
-      return {
-        allowed: true,
-        policy,
-        grant,
-      };
-    }
-
-    const existing = task.approvals.find(
-      (approval) =>
-        approval.fingerprint === fingerprint &&
-        approval.rule_id === policy.rule_id &&
-        (approval.status === "PENDING" ||
-          approval.status === "AWAITING_USER"),
-    );
-
-    if (existing) {
-      throw new AgentDockError(
-        "APPROVAL_REQUIRED",
-        "Operation requires approval before execution.",
-        { approval_request: existing },
+      const taskGrant = task.approval_grants.find(
+        (grant) =>
+          grant.kind === "ALLOW_TASK" &&
+          grant.approval_scope === policy.approval_scope,
       );
+      if (taskGrant) {
+        return {
+          kind: "allowed",
+          grant: taskGrant,
+          request: null,
+          created: false,
+        };
+      }
+
+      const onceIndex = task.approval_grants.findIndex(
+        (grant) =>
+          grant.kind === "ALLOW_ONCE" &&
+          grant.fingerprint === fingerprint &&
+          grant.approval_scope === policy.approval_scope,
+      );
+      if (onceIndex !== -1) {
+        const [grant] = task.approval_grants.splice(onceIndex, 1);
+        task.updated_at = new Date().toISOString();
+        return {
+          kind: "allowed",
+          grant,
+          request: null,
+          created: false,
+        };
+      }
+
+      const existing = task.approvals.find(
+        (approval) =>
+          approval.fingerprint === fingerprint &&
+          approval.rule_id === policy.rule_id &&
+          (approval.status === "PENDING" ||
+            approval.status === "AWAITING_USER"),
+      );
+
+      if (existing) {
+        return {
+          kind: "required",
+          grant: null,
+          request: existing,
+          created: false,
+        };
+      }
+
+      const now = new Date().toISOString();
+      const request = {
+        approval_id: "apr_" + randomUUID(),
+        task_id: taskId,
+        status: "PENDING",
+        rule_id: policy.rule_id,
+        approval_scope: policy.approval_scope,
+        tool,
+        operation,
+        fingerprint,
+        created_at: now,
+        updated_at: now,
+        decision: null,
+        resolved_at: null,
+      };
+
+      task.approvals.push(request);
+      task.updated_at = now;
+      return {
+        kind: "required",
+        grant: null,
+        request,
+        created: true,
+      };
+    });
+
+    const outcome = mutation.result;
+    if (outcome.kind === "allowed") {
+      return {
+        allowed: true,
+        policy,
+        grant: outcome.grant,
+      };
     }
 
-    const now = new Date().toISOString();
-    const request = {
-      approval_id: "apr_" + randomUUID(),
-      task_id: taskId,
-      status: "PENDING",
-      rule_id: policy.rule_id,
-      approval_scope: policy.approval_scope,
-      tool,
-      operation,
-      fingerprint,
-      created_at: now,
-      updated_at: now,
-      decision: null,
-      resolved_at: null,
-    };
-
-    task.approvals.push(request);
-    this.#persist(task);
-    this.#audit?.append(taskId, {
-      event: "APPROVAL_REQUESTED",
-      approval_id: request.approval_id,
-      rule_id: request.rule_id,
-      approval_scope: request.approval_scope,
-      tool: request.tool,
-      operation: request.operation,
-      status: request.status,
-      created_at: request.created_at,
-    });
+    if (outcome.created) {
+      this.#audit?.append(taskId, {
+        event: "APPROVAL_REQUESTED",
+        approval_id: outcome.request.approval_id,
+        rule_id: outcome.request.rule_id,
+        approval_scope: outcome.request.approval_scope,
+        tool: outcome.request.tool,
+        operation: outcome.request.operation,
+        status: outcome.request.status,
+        created_at: outcome.request.created_at,
+      });
+    }
 
     throw new AgentDockError(
       "APPROVAL_REQUIRED",
       "Operation requires approval before execution.",
-      { approval_request: request },
+      { approval_request: outcome.request },
     );
   }
 
   get({ taskId, approvalId }) {
     const task = this.#tasks.get(taskId);
-    this.#ensureState(task);
+    ensureApprovalState(task);
     const approval = task.approvals.find(
       (item) => item.approval_id === approvalId,
     );
@@ -168,8 +196,6 @@ export class ApprovalService {
   }
 
   respond({ taskId, approvalId, decision }) {
-    this.#tasks.assertActive(taskId);
-
     if (!DECISIONS.has(decision)) {
       throw new AgentDockError(
         "INVALID_APPROVAL_DECISION",
@@ -177,93 +203,95 @@ export class ApprovalService {
       );
     }
 
-    const task = this.#tasks.get(taskId);
-    this.#ensureState(task);
-    const approval = task.approvals.find(
-      (item) => item.approval_id === approvalId,
-    );
-    if (!approval) {
-      throw new AgentDockError(
-        "APPROVAL_NOT_FOUND",
-        "Approval request not found: " + approvalId,
+    const mutation = this.#tasks.mutate(taskId, (task) => {
+      ensureApprovalState(task);
+      assertTaskActive(task);
+
+      const approval = task.approvals.find(
+        (item) => item.approval_id === approvalId,
       );
-    }
+      if (!approval) {
+        throw new AgentDockError(
+          "APPROVAL_NOT_FOUND",
+          "Approval request not found: " + approvalId,
+        );
+      }
 
-    if (
-      approval.status !== "PENDING" &&
-      approval.status !== "AWAITING_USER"
-    ) {
-      throw new AgentDockError(
-        "APPROVAL_ALREADY_RESOLVED",
-        "Approval request has already been resolved.",
-      );
-    }
+      if (
+        approval.status !== "PENDING" &&
+        approval.status !== "AWAITING_USER"
+      ) {
+        throw new AgentDockError(
+          "APPROVAL_ALREADY_RESOLVED",
+          "Approval request has already been resolved.",
+        );
+      }
 
-    const now = new Date().toISOString();
-    approval.decision = decision;
-    approval.updated_at = now;
+      const now = new Date().toISOString();
+      approval.decision = decision;
+      approval.updated_at = now;
 
-    if (decision === "ASK_USER") {
-      approval.status = "AWAITING_USER";
-      approval.resolved_at = null;
-      this.#persist(task);
-      this.#audit?.append(taskId, {
-        event: "APPROVAL_RESPONDED",
-        approval_id: approvalId,
-        decision,
-        status: approval.status,
-        responded_at: now,
-      });
-      return {
-        approval,
-        grant: null,
-      };
-    }
+      if (decision === "ASK_USER") {
+        approval.status = "AWAITING_USER";
+        approval.resolved_at = null;
+        task.updated_at = now;
+        return {
+          approval,
+          grant: null,
+          responded_at: now,
+        };
+      }
 
-    if (decision === "DENY") {
-      approval.status = "DENIED";
+      if (decision === "DENY") {
+        approval.status = "DENIED";
+        approval.resolved_at = now;
+        task.updated_at = now;
+        return {
+          approval,
+          grant: null,
+          responded_at: now,
+        };
+      }
+
+      approval.status = "APPROVED";
       approval.resolved_at = now;
-      this.#persist(task);
-      this.#audit?.append(taskId, {
-        event: "APPROVAL_RESPONDED",
+
+      const grant = {
+        grant_id: "grant_" + randomUUID(),
+        task_id: taskId,
         approval_id: approvalId,
-        decision,
-        status: approval.status,
-        responded_at: now,
-      });
+        kind: decision,
+        approval_scope: approval.approval_scope,
+        fingerprint: approval.fingerprint,
+        created_at: now,
+      };
+      task.approval_grants.push(grant);
+      task.updated_at = now;
       return {
         approval,
-        grant: null,
+        grant,
+        responded_at: now,
       };
-    }
+    });
 
-    approval.status = "APPROVED";
-    approval.resolved_at = now;
-
-    const grant = {
-      grant_id: "grant_" + randomUUID(),
-      task_id: taskId,
-      approval_id: approvalId,
-      kind: decision,
-      approval_scope: approval.approval_scope,
-      fingerprint: approval.fingerprint,
-      created_at: now,
-    };
-    task.approval_grants.push(grant);
-    this.#persist(task);
+    const result = mutation.result;
     this.#audit?.append(taskId, {
       event: "APPROVAL_RESPONDED",
       approval_id: approvalId,
       decision,
-      status: approval.status,
-      grant_id: grant.grant_id,
-      approval_scope: grant.approval_scope,
-      responded_at: now,
+      status: result.approval.status,
+      ...(result.grant
+        ? {
+            grant_id: result.grant.grant_id,
+            approval_scope: result.grant.approval_scope,
+          }
+        : {}),
+      responded_at: result.responded_at,
     });
 
     return {
-      approval,
-      grant,
+      approval: result.approval,
+      grant: result.grant,
     };
   }
 }

@@ -4,10 +4,10 @@
 
 **Blocked by:** 03: Expand a transactional SQLite StateStore beside legacy JSON
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Task/Approval/Audit/Workflow mutations are transactionally serialized through the StateStore interface.
-- [ ] Workflow concurrent-update regression no longer loses either update/history entry.
-- [ ] Persisted process metadata uses the same canonical state backend while live child ownership remains explicit.
-- [ ] Reconnect/restart tests continue to pass.
-- [ ] Legacy JSON is import input rather than a second ongoing source of truth when SQLite mode is enabled.
+- [x] Task/Approval/Audit/Workflow mutations are transactionally serialized through the StateStore interface.
+- [x] Workflow concurrent-update regression no longer loses either update/history entry.
+- [x] Persisted process metadata uses the same canonical state backend while live child ownership remains explicit.
+- [x] Reconnect/restart tests continue to pass.
+- [x] Legacy JSON is import input rather than a second ongoing source of truth when SQLite mode is enabled.

@@ -95,6 +95,7 @@ export class StateStore {
   #tasksDir;
   #processesDir;
   #auditsDir;
+  #workflowsDir;
   #documentsDir;
   #maxPersistedOutputBytes;
   #backend;
@@ -129,6 +130,7 @@ export class StateStore {
     this.#tasksDir = path.join(this.#stateDir, "tasks");
     this.#processesDir = path.join(this.#stateDir, "processes");
     this.#auditsDir = path.join(this.#stateDir, "audits");
+    this.#workflowsDir = path.join(this.#stateDir, "workflows");
     this.#documentsDir = path.join(this.#stateDir, "documents");
 
     mkdirSync(this.#stateDir, { recursive: true, mode: 0o700 });
@@ -136,6 +138,7 @@ export class StateStore {
     mkdirSync(this.#tasksDir, { recursive: true, mode: 0o700 });
     mkdirSync(this.#processesDir, { recursive: true, mode: 0o700 });
     mkdirSync(this.#auditsDir, { recursive: true, mode: 0o700 });
+    mkdirSync(this.#workflowsDir, { recursive: true, mode: 0o700 });
 
     if (this.#backend === "sqlite") {
       this.#openSqlite();
@@ -446,6 +449,52 @@ export class StateStore {
     }
   }
 
+  listDocuments(kind) {
+    this.#assertOpen();
+    const safeKind = safeDocumentPart(kind, "kind");
+    if (this.#backend === "sqlite") {
+      return this.#db
+        .prepare(
+          "SELECT id, value_json FROM state_documents WHERE kind = ? ORDER BY id",
+        )
+        .all(safeKind)
+        .map((row) => ({
+          id: row.id,
+          value: JSON.parse(row.value_json),
+        }));
+    }
+
+    const directory =
+      safeKind === "task"
+        ? this.#tasksDir
+        : safeKind === "process"
+          ? this.#processesDir
+          : safeKind === "audit"
+            ? this.#auditsDir
+            : safeKind === "workflow"
+              ? this.#workflowsDir
+              : path.join(this.#documentsDir, safeKind);
+
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === "ENOENT") return [];
+      throw error;
+    }
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((entry) => {
+        const id = entry.name.slice(0, -".json".length);
+        return {
+          id,
+          value: this.#readJson(path.join(directory, entry.name)),
+        };
+      })
+      .filter((entry) => entry.value !== null);
+  }
+
   taskPath(taskId) {
     return path.join(this.#tasksDir, taskId + ".json");
   }
@@ -463,6 +512,24 @@ export class StateStore {
       return this.loadDocument("task", taskId);
     }
     return this.#readJson(this.taskPath(taskId));
+  }
+
+  mutateTask(taskId, mutator) {
+    if (this.#backend === "sqlite") {
+      return this.mutateDocument("task", taskId, mutator, {
+        defaultValue: null,
+      });
+    }
+    const current = this.loadTask(taskId);
+    const next = mutator(cloneJson(current));
+    if (next === undefined) {
+      throw new AgentDockError(
+        "INVALID_STATE_MUTATION",
+        "Task mutation must return a JSON value.",
+      );
+    }
+    this.saveTask(next);
+    return next;
   }
 
   saveTask(task) {
@@ -524,11 +591,75 @@ export class StateStore {
     };
   }
 
+  mutateAudit(taskId, mutator) {
+    const initial = {
+      task_id: taskId,
+      next_sequence: 1,
+      entries: [],
+    };
+    if (this.#backend === "sqlite") {
+      return this.mutateDocument("audit", taskId, mutator, {
+        defaultValue: initial,
+      });
+    }
+    const current = this.loadAudit(taskId);
+    const next = mutator(cloneJson(current));
+    if (next === undefined) {
+      throw new AgentDockError(
+        "INVALID_STATE_MUTATION",
+        "Audit mutation must return a JSON value.",
+      );
+    }
+    this.saveAudit(taskId, next);
+    return next;
+  }
+
   saveAudit(taskId, value) {
     if (this.#backend === "sqlite") {
       return this.saveDocument("audit", taskId, value);
     }
     this.#writeJson(this.auditPath(taskId), value);
     return value;
+  }
+
+  workflowPath(workflowId) {
+    return path.join(this.#workflowsDir, workflowId + ".json");
+  }
+
+  loadWorkflow(workflowId) {
+    if (this.#backend === "sqlite") {
+      return this.loadDocument("workflow", workflowId);
+    }
+    return this.#readJson(this.workflowPath(workflowId));
+  }
+
+  saveWorkflow(workflowId, workflow) {
+    if (this.#backend === "sqlite") {
+      return this.saveDocument("workflow", workflowId, workflow);
+    }
+    this.#writeJson(this.workflowPath(workflowId), workflow);
+    return workflow;
+  }
+
+  mutateWorkflow(workflowId, mutator) {
+    if (this.#backend === "sqlite") {
+      return this.mutateDocument("workflow", workflowId, mutator, {
+        defaultValue: null,
+      });
+    }
+    const current = this.loadWorkflow(workflowId);
+    const next = mutator(cloneJson(current));
+    if (next === undefined) {
+      throw new AgentDockError(
+        "INVALID_STATE_MUTATION",
+        "Workflow mutation must return a JSON value.",
+      );
+    }
+    this.saveWorkflow(workflowId, next);
+    return next;
+  }
+
+  listWorkflows() {
+    return this.listDocuments("workflow");
   }
 }

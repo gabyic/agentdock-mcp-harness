@@ -1,12 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   access,
-  mkdir,
   readFile,
-  readdir,
   realpath,
-  rename,
-  writeFile,
 } from "node:fs/promises";
 import path from "node:path";
 import { AgentDockError } from "./errors.js";
@@ -96,23 +92,6 @@ const EVENTS = new Set([
   "resume",
 ]);
 
-async function atomicJsonWrite(filePath, value) {
-  await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
-  const temp =
-    filePath +
-    ".tmp-" +
-    process.pid +
-    "-" +
-    Date.now() +
-    "-" +
-    Math.random().toString(16).slice(2);
-  await writeFile(temp, JSON.stringify(value, null, 2) + "\n", {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  await rename(temp, filePath);
-}
-
 async function exists(filePath) {
   try {
     await access(filePath);
@@ -133,11 +112,11 @@ function validateEnum(value, allowed, code, field) {
 }
 
 export class WorkflowService {
-  #workflowsDir;
+  #store;
   #skillService;
 
   constructor({ stateStore, skillService }) {
-    this.#workflowsDir = path.join(stateStore.stateDir, "workflows");
+    this.#store = stateStore;
     this.#skillService = skillService;
   }
 
@@ -160,28 +139,20 @@ export class WorkflowService {
   }
 
   async #path(repoPath) {
-    const identity = await this.#identity(repoPath);
-    return {
-      ...identity,
-      filePath: path.join(this.#workflowsDir, identity.id + ".json"),
-    };
+    return this.#identity(repoPath);
   }
 
   async #load(repoPath) {
     const identity = await this.#path(repoPath);
-    try {
-      const workflow = JSON.parse(await readFile(identity.filePath, "utf8"));
-      return { identity, workflow };
-    } catch (error) {
-      if (error?.code === "ENOENT") {
-        throw new AgentDockError(
-          "WORKFLOW_NOT_FOUND",
-          "No guided-development workflow exists for this repository.",
-          { repo_path: identity.repoPath },
-        );
-      }
-      throw error;
+    const workflow = this.#store.loadWorkflow(identity.id);
+    if (!workflow) {
+      throw new AgentDockError(
+        "WORKFLOW_NOT_FOUND",
+        "No guided-development workflow exists for this repository.",
+        { repo_path: identity.repoPath },
+      );
     }
+    return { identity, workflow };
   }
 
   async #setupStatus(repoPath) {
@@ -290,13 +261,6 @@ export class WorkflowService {
     }
 
     const identity = await this.#path(repoPath);
-    if ((await exists(identity.filePath)) && !replace) {
-      throw new AgentDockError(
-        "WORKFLOW_EXISTS",
-        "A guided-development workflow already exists for this repository; use workflow.guide or set replace=true to start a new goal.",
-        { repo_path: identity.repoPath },
-      );
-    }
 
     const routed = this.#routeForStart({
       sessionSpan,
@@ -340,7 +304,16 @@ export class WorkflowService {
       );
     }
 
-    await atomicJsonWrite(identity.filePath, workflow);
+    this.#store.mutateWorkflow(identity.id, (current) => {
+      if (current && !replace) {
+        throw new AgentDockError(
+          "WORKFLOW_EXISTS",
+          "A guided-development workflow already exists for this repository; use workflow.guide or set replace=true to start a new goal.",
+          { repo_path: identity.repoPath },
+        );
+      }
+      return workflow;
+    });
     return this.guide({ repoPath: identity.repoPath });
   }
 
@@ -350,23 +323,15 @@ export class WorkflowService {
   }
 
   async list({ includeDone = false } = {}) {
-    await mkdir(this.#workflowsDir, { recursive: true, mode: 0o700 });
-    const entries = await readdir(this.#workflowsDir, { withFileTypes: true });
     const workflows = [];
 
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-
-      let workflow;
-      try {
-        workflow = JSON.parse(
-          await readFile(path.join(this.#workflowsDir, entry.name), "utf8"),
-        );
-      } catch (error) {
+    for (const entry of this.#store.listWorkflows()) {
+      const workflow = entry.value;
+      if (!workflow || typeof workflow !== "object") {
         throw new AgentDockError(
           "INVALID_WORKFLOW_STATE",
           "A persisted guided-development workflow cannot be read.",
-          { file: entry.name, detail: error?.message ?? String(error) },
+          { id: entry.id },
         );
       }
 
@@ -374,7 +339,7 @@ export class WorkflowService {
         throw new AgentDockError(
           "INVALID_WORKFLOW_PHASE",
           "Persisted workflow has an invalid phase.",
-          { file: entry.name, phase: workflow.phase },
+          { id: entry.id, phase: workflow.phase },
         );
       }
       if (!includeDone && workflow.phase === "DONE") continue;
@@ -412,88 +377,99 @@ export class WorkflowService {
     artifacts,
     note,
   }) {
-    const { identity, workflow } = await this.#load(repoPath);
-    if (!PHASES.has(workflow.phase)) {
-      throw new AgentDockError(
-        "INVALID_WORKFLOW_PHASE",
-        "Persisted workflow has an invalid phase.",
-        { phase: workflow.phase },
-      );
-    }
-    if (workflow.phase === "DONE") {
-      throw new AgentDockError(
-        "WORKFLOW_COMPLETE",
-        "Completed workflows are immutable; start a new workflow for the next goal.",
-        { repo_path: workflow.repo_path },
-      );
-    }
-
-    let changed = false;
-    if (sessionSpan !== undefined) {
-      workflow.session_span = validateEnum(
-        sessionSpan,
-        ["single", "multi", "unknown"],
-        "INVALID_WORKFLOW_SESSION_SPAN",
-        "session_span",
-      );
-      changed = true;
-    }
-    if (routeClarity !== undefined) {
-      workflow.route_clarity = validateEnum(
-        routeClarity,
-        ["clear", "foggy", "unknown"],
-        "INVALID_WORKFLOW_ROUTE_CLARITY",
-        "route_clarity",
-      );
-      changed = true;
-    }
-    if (openDecisions !== undefined) {
-      workflow.open_decisions = [
-        ...new Set(
-          openDecisions
-            .map((value) => String(value).trim())
-            .filter(Boolean),
-        ),
-      ];
-      if (workflow.open_decisions.length > 0) {
-        workflow.decisions_settled = false;
-      }
-      changed = true;
-    }
-    if (artifacts !== undefined) {
-      const nextArtifacts = { ...(workflow.artifacts ?? {}) };
-      for (const [key, value] of Object.entries(artifacts)) {
-        const cleanKey = String(key).trim();
-        const cleanValue = String(value).trim();
-        if (!cleanKey || !cleanValue) continue;
-        nextArtifacts[cleanKey] = cleanValue;
-      }
-      workflow.artifacts = nextArtifacts;
-      changed = true;
-    }
-
+    const identity = await this.#path(repoPath);
     const cleanNote = note === undefined ? "" : String(note).trim();
-    if (!changed && !cleanNote) {
-      throw new AgentDockError(
-        "WORKFLOW_UPDATE_EMPTY",
-        "workflow.update requires at least one state change or note.",
-      );
-    }
 
-    workflow.last_event = "progress";
-    workflow.updated_at = new Date().toISOString();
-    workflow.history.push({
-      at: workflow.updated_at,
-      event: "progress",
-      from_phase: workflow.phase,
-      phase: workflow.phase,
-      note: cleanNote || null,
+    this.#store.mutateWorkflow(identity.id, (workflow) => {
+      if (!workflow) {
+        throw new AgentDockError(
+          "WORKFLOW_NOT_FOUND",
+          "No guided-development workflow exists for this repository.",
+          { repo_path: identity.repoPath },
+        );
+      }
+      if (!PHASES.has(workflow.phase)) {
+        throw new AgentDockError(
+          "INVALID_WORKFLOW_PHASE",
+          "Persisted workflow has an invalid phase.",
+          { phase: workflow.phase },
+        );
+      }
+      if (workflow.phase === "DONE") {
+        throw new AgentDockError(
+          "WORKFLOW_COMPLETE",
+          "Completed workflows are immutable; start a new workflow for the next goal.",
+          { repo_path: workflow.repo_path },
+        );
+      }
+
+      let changed = false;
+      if (sessionSpan !== undefined) {
+        workflow.session_span = validateEnum(
+          sessionSpan,
+          ["single", "multi", "unknown"],
+          "INVALID_WORKFLOW_SESSION_SPAN",
+          "session_span",
+        );
+        changed = true;
+      }
+      if (routeClarity !== undefined) {
+        workflow.route_clarity = validateEnum(
+          routeClarity,
+          ["clear", "foggy", "unknown"],
+          "INVALID_WORKFLOW_ROUTE_CLARITY",
+          "route_clarity",
+        );
+        changed = true;
+      }
+      if (openDecisions !== undefined) {
+        workflow.open_decisions = [
+          ...new Set(
+            openDecisions
+              .map((value) => String(value).trim())
+              .filter(Boolean),
+          ),
+        ];
+        if (workflow.open_decisions.length > 0) {
+          workflow.decisions_settled = false;
+        }
+        changed = true;
+      }
+      if (artifacts !== undefined) {
+        const nextArtifacts = { ...(workflow.artifacts ?? {}) };
+        for (const [key, value] of Object.entries(artifacts)) {
+          const cleanKey = String(key).trim();
+          const cleanValue = String(value).trim();
+          if (!cleanKey || !cleanValue) continue;
+          nextArtifacts[cleanKey] = cleanValue;
+        }
+        workflow.artifacts = nextArtifacts;
+        changed = true;
+      }
+
+      if (!changed && !cleanNote) {
+        throw new AgentDockError(
+          "WORKFLOW_UPDATE_EMPTY",
+          "workflow.update requires at least one state change or note.",
+        );
+      }
+
+      workflow.last_event = "progress";
+      workflow.updated_at = new Date().toISOString();
+      workflow.history ??= [];
+      workflow.history.push({
+        at: workflow.updated_at,
+        event: "progress",
+        from_phase: workflow.phase,
+        phase: workflow.phase,
+        note: cleanNote || null,
+      });
+      if (workflow.history.length > 200) {
+        workflow.history = workflow.history.slice(-200);
+      }
+      return workflow;
     });
-    if (workflow.history.length > 200) {
-      workflow.history = workflow.history.slice(-200);
-    }
 
-    await atomicJsonWrite(identity.filePath, workflow);
     return this.guide({ repoPath: identity.repoPath });
   }
 
@@ -591,146 +567,158 @@ export class WorkflowService {
       );
     }
 
-    const { identity, workflow } = await this.#load(repoPath);
-    if (!PHASES.has(workflow.phase)) {
-      throw new AgentDockError(
-        "INVALID_WORKFLOW_PHASE",
-        "Persisted workflow has an invalid phase.",
-        { phase: workflow.phase },
-      );
-    }
+    const identity = await this.#path(repoPath);
+    const setupStatus =
+      event === "setup_complete"
+        ? await this.#setupStatus(identity.repoPath)
+        : null;
 
-    if (sessionSpan !== undefined) {
-      workflow.session_span = validateEnum(
-        sessionSpan,
-        ["single", "multi", "unknown"],
-        "INVALID_WORKFLOW_SESSION_SPAN",
-        "session_span",
-      );
-    }
-    if (routeClarity !== undefined) {
-      workflow.route_clarity = validateEnum(
-        routeClarity,
-        ["clear", "foggy", "unknown"],
-        "INVALID_WORKFLOW_ROUTE_CLARITY",
-        "route_clarity",
-      );
-    }
-    if (openDecisions !== undefined) {
-      workflow.open_decisions = [...openDecisions].map((value) => String(value));
-    }
+    this.#store.mutateWorkflow(identity.id, (workflow) => {
+      if (!workflow) {
+        throw new AgentDockError(
+          "WORKFLOW_NOT_FOUND",
+          "No guided-development workflow exists for this repository.",
+          { repo_path: identity.repoPath },
+        );
+      }
+      if (!PHASES.has(workflow.phase)) {
+        throw new AgentDockError(
+          "INVALID_WORKFLOW_PHASE",
+          "Persisted workflow has an invalid phase.",
+          { phase: workflow.phase },
+        );
+      }
 
-    const previousPhase = workflow.phase;
-    switch (event) {
-      case "setup_complete":
-        if (previousPhase !== "SETUP") this.#invalidTransition(workflow, event);
-        {
-          const setupStatus = await this.#setupStatus(workflow.repo_path);
-          if (!setupStatus.configured) {
+      if (sessionSpan !== undefined) {
+        workflow.session_span = validateEnum(
+          sessionSpan,
+          ["single", "multi", "unknown"],
+          "INVALID_WORKFLOW_SESSION_SPAN",
+          "session_span",
+        );
+      }
+      if (routeClarity !== undefined) {
+        workflow.route_clarity = validateEnum(
+          routeClarity,
+          ["clear", "foggy", "unknown"],
+          "INVALID_WORKFLOW_ROUTE_CLARITY",
+          "route_clarity",
+        );
+      }
+      if (openDecisions !== undefined) {
+        workflow.open_decisions = [...openDecisions].map((value) => String(value));
+      }
+
+      const previousPhase = workflow.phase;
+      switch (event) {
+        case "setup_complete":
+          if (previousPhase !== "SETUP") this.#invalidTransition(workflow, event);
+          if (!setupStatus?.configured) {
             throw new AgentDockError(
               "WORKFLOW_SETUP_INCOMPLETE",
               "setup_complete requires the Matt engineering-skill repo configuration to be complete.",
-              { missing: setupStatus.missing },
+              { missing: setupStatus?.missing ?? [] },
             );
           }
-        }
-        workflow.setup_configured = true;
-        workflow.phase = workflow.after_setup_phase || "GRILLING";
-        workflow.after_setup_phase = null;
-        break;
-      case "prototype_needed":
-        if (!["GRILLING", "WAYFINDING"].includes(previousPhase)) {
+          workflow.setup_configured = true;
+          workflow.phase = workflow.after_setup_phase || "GRILLING";
+          workflow.after_setup_phase = null;
+          break;
+        case "prototype_needed":
+          if (!["GRILLING", "WAYFINDING"].includes(previousPhase)) {
+            this.#invalidTransition(workflow, event);
+          }
+          workflow.return_phase = previousPhase;
+          workflow.phase = "PROTOTYPE";
+          break;
+        case "prototype_complete":
+          if (previousPhase !== "PROTOTYPE") {
+            this.#invalidTransition(workflow, event);
+          }
+          workflow.phase = workflow.return_phase || "GRILLING";
+          workflow.return_phase = null;
+          break;
+        case "grilling_complete":
+          if (previousPhase !== "GRILLING") this.#invalidTransition(workflow, event);
+          this.#assertNoOpenDecisions(workflow, event);
+          if (workflow.session_span === "unknown") {
+            throw new AgentDockError(
+              "WORKFLOW_SESSION_SPAN_REQUIRED",
+              "Before leaving grilling, classify the build as single-session or multi-session.",
+            );
+          }
+          workflow.decisions_settled = true;
+          workflow.phase =
+            workflow.session_span === "multi" ? "SPEC" : "IMPLEMENT";
+          break;
+        case "map_clear":
+          if (previousPhase !== "WAYFINDING") this.#invalidTransition(workflow, event);
+          this.#assertNoOpenDecisions(workflow, event);
+          workflow.decisions_settled = true;
+          workflow.route_clarity = "clear";
+          workflow.phase = "SPEC";
+          break;
+        case "spec_complete":
+          if (previousPhase !== "SPEC") this.#invalidTransition(workflow, event);
+          this.#assertNoOpenDecisions(workflow, event);
+          if (workflow.session_span === "unknown") {
+            throw new AgentDockError(
+              "WORKFLOW_SESSION_SPAN_REQUIRED",
+              "Before leaving the spec phase, classify the build as single-session or multi-session.",
+            );
+          }
+          workflow.decisions_settled = true;
+          workflow.phase =
+            workflow.session_span === "multi" ? "TICKETS" : "IMPLEMENT";
+          break;
+        case "tickets_complete":
+          if (previousPhase !== "TICKETS") this.#invalidTransition(workflow, event);
+          workflow.phase = "IMPLEMENT";
+          break;
+        case "implementation_complete":
+          if (previousPhase !== "IMPLEMENT") this.#invalidTransition(workflow, event);
+          workflow.phase = "REVIEW";
+          break;
+        case "review_passed":
+          if (previousPhase !== "REVIEW") this.#invalidTransition(workflow, event);
+          workflow.phase = "DONE";
+          break;
+        case "review_changes_requested":
+          if (previousPhase !== "REVIEW") this.#invalidTransition(workflow, event);
+          workflow.phase = "IMPLEMENT";
+          break;
+        case "blocked":
+          if (previousPhase === "DONE" || previousPhase === "BLOCKED") {
+            this.#invalidTransition(workflow, event);
+          }
+          workflow.return_phase = previousPhase;
+          workflow.phase = "BLOCKED";
+          break;
+        case "resume":
+          if (previousPhase !== "BLOCKED") this.#invalidTransition(workflow, event);
+          workflow.phase = workflow.return_phase || "GRILLING";
+          workflow.return_phase = null;
+          break;
+        default:
           this.#invalidTransition(workflow, event);
-        }
-        workflow.return_phase = previousPhase;
-        workflow.phase = "PROTOTYPE";
-        break;
-      case "prototype_complete":
-        if (previousPhase !== "PROTOTYPE") {
-          this.#invalidTransition(workflow, event);
-        }
-        workflow.phase = workflow.return_phase || "GRILLING";
-        workflow.return_phase = null;
-        break;
-      case "grilling_complete":
-        if (previousPhase !== "GRILLING") this.#invalidTransition(workflow, event);
-        this.#assertNoOpenDecisions(workflow, event);
-        if (workflow.session_span === "unknown") {
-          throw new AgentDockError(
-            "WORKFLOW_SESSION_SPAN_REQUIRED",
-            "Before leaving grilling, classify the build as single-session or multi-session.",
-          );
-        }
-        workflow.decisions_settled = true;
-        workflow.phase =
-          workflow.session_span === "multi" ? "SPEC" : "IMPLEMENT";
-        break;
-      case "map_clear":
-        if (previousPhase !== "WAYFINDING") this.#invalidTransition(workflow, event);
-        this.#assertNoOpenDecisions(workflow, event);
-        workflow.decisions_settled = true;
-        workflow.route_clarity = "clear";
-        workflow.phase = "SPEC";
-        break;
-      case "spec_complete":
-        if (previousPhase !== "SPEC") this.#invalidTransition(workflow, event);
-        this.#assertNoOpenDecisions(workflow, event);
-        if (workflow.session_span === "unknown") {
-          throw new AgentDockError(
-            "WORKFLOW_SESSION_SPAN_REQUIRED",
-            "Before leaving the spec phase, classify the build as single-session or multi-session.",
-          );
-        }
-        workflow.decisions_settled = true;
-        workflow.phase =
-          workflow.session_span === "multi" ? "TICKETS" : "IMPLEMENT";
-        break;
-      case "tickets_complete":
-        if (previousPhase !== "TICKETS") this.#invalidTransition(workflow, event);
-        workflow.phase = "IMPLEMENT";
-        break;
-      case "implementation_complete":
-        if (previousPhase !== "IMPLEMENT") this.#invalidTransition(workflow, event);
-        workflow.phase = "REVIEW";
-        break;
-      case "review_passed":
-        if (previousPhase !== "REVIEW") this.#invalidTransition(workflow, event);
-        workflow.phase = "DONE";
-        break;
-      case "review_changes_requested":
-        if (previousPhase !== "REVIEW") this.#invalidTransition(workflow, event);
-        workflow.phase = "IMPLEMENT";
-        break;
-      case "blocked":
-        if (previousPhase === "DONE" || previousPhase === "BLOCKED") {
-          this.#invalidTransition(workflow, event);
-        }
-        workflow.return_phase = previousPhase;
-        workflow.phase = "BLOCKED";
-        break;
-      case "resume":
-        if (previousPhase !== "BLOCKED") this.#invalidTransition(workflow, event);
-        workflow.phase = workflow.return_phase || "GRILLING";
-        workflow.return_phase = null;
-        break;
-      default:
-        this.#invalidTransition(workflow, event);
-    }
+      }
 
-    workflow.last_event = event;
-    workflow.updated_at = new Date().toISOString();
-    workflow.history.push({
-      at: workflow.updated_at,
-      event,
-      from_phase: previousPhase,
-      phase: workflow.phase,
-      note: note ? String(note) : null,
+      workflow.last_event = event;
+      workflow.updated_at = new Date().toISOString();
+      workflow.history ??= [];
+      workflow.history.push({
+        at: workflow.updated_at,
+        event,
+        from_phase: previousPhase,
+        phase: workflow.phase,
+        note: note ? String(note) : null,
+      });
+      if (workflow.history.length > 200) {
+        workflow.history = workflow.history.slice(-200);
+      }
+      return workflow;
     });
-    if (workflow.history.length > 200) {
-      workflow.history = workflow.history.slice(-200);
-    }
 
-    await atomicJsonWrite(identity.filePath, workflow);
     return this.guide({ repoPath: identity.repoPath });
   }
 

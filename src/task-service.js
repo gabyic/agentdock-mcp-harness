@@ -7,40 +7,27 @@ import { AgentDockError } from "./errors.js";
 export class TaskService {
   #git;
   #store;
-  #tasks = new Map();
 
   constructor({ gitService, stateStore }) {
     this.#git = gitService;
     this.#store = stateStore;
   }
 
-  get(taskId) {
+  #validateTaskId(taskId) {
     if (!/^task_[0-9a-f-]{36}$/.test(taskId)) {
       throw new AgentDockError("INVALID_TASK_ID", "Invalid task_id format.");
     }
+    return taskId;
+  }
 
-    let task = this.#tasks.get(taskId);
-    if (!task) {
-      task = this.#store.loadTask(taskId);
-      if (task) {
-        this.#tasks.set(taskId, task);
-      }
-    }
-
+  #assertExists(task, taskId) {
     if (!task) {
       throw new AgentDockError("TASK_NOT_FOUND", "Task not found: " + taskId);
     }
     return task;
   }
 
-  save(task) {
-    this.#tasks.set(task.task_id, task);
-    this.#store.saveTask(task);
-    return task;
-  }
-
-  assertActive(taskId) {
-    const task = this.get(taskId);
+  #assertActiveRecord(task) {
     if (task.status !== "ACTIVE") {
       throw new AgentDockError(
         "TASK_NOT_ACTIVE",
@@ -55,6 +42,32 @@ export class TaskService {
       );
     }
     return task;
+  }
+
+  get(taskId) {
+    this.#validateTaskId(taskId);
+    return this.#assertExists(this.#store.loadTask(taskId), taskId);
+  }
+
+  save(task) {
+    this.#validateTaskId(task.task_id);
+    this.#store.saveTask(task);
+    return task;
+  }
+
+  mutate(taskId, mutator) {
+    this.#validateTaskId(taskId);
+    let result;
+    const task = this.#store.mutateTask(taskId, (current) => {
+      this.#assertExists(current, taskId);
+      result = mutator(current);
+      return current;
+    });
+    return { task, result };
+  }
+
+  assertActive(taskId) {
+    return this.#assertActiveRecord(this.get(taskId));
   }
 
   resume(taskId) {
@@ -75,14 +88,14 @@ export class TaskService {
   }
 
   addProcess(taskId, processId) {
-    const task = this.get(taskId);
-    task.process_ids ??= [];
-    if (!task.process_ids.includes(processId)) {
-      task.process_ids.push(processId);
-      task.updated_at = new Date().toISOString();
-      this.#store.saveTask(task);
-    }
-    return task;
+    return this.mutate(taskId, (task) => {
+      this.#assertActiveRecord(task);
+      task.process_ids ??= [];
+      if (!task.process_ids.includes(processId)) {
+        task.process_ids.push(processId);
+        task.updated_at = new Date().toISOString();
+      }
+    }).task;
   }
 
   finish(
@@ -94,38 +107,39 @@ export class TaskService {
       retentionRef = null,
     },
   ) {
-    const task = this.assertActive(taskId);
-    const now = new Date().toISOString();
-    task.status = "COMPLETED";
-    task.final_commit_sha = finalCommitSha;
-    task.outcome = outcome;
-    task.outcome_reason = outcomeReason;
-    task.retention_ref = retentionRef;
-    task.finished_at = now;
-    task.updated_at = now;
-    task.approval_grants = [];
-    return this.save(task);
+    return this.mutate(taskId, (task) => {
+      this.#assertActiveRecord(task);
+      const now = new Date().toISOString();
+      task.status = "COMPLETED";
+      task.final_commit_sha = finalCommitSha;
+      task.outcome = outcome;
+      task.outcome_reason = outcomeReason;
+      task.retention_ref = retentionRef;
+      task.finished_at = now;
+      task.updated_at = now;
+      task.approval_grants = [];
+    }).task;
   }
 
   cancel(taskId) {
-    const task = this.get(taskId);
-    if (task.status === "CANCELLED") {
-      return task;
-    }
-    if (task.status !== "ACTIVE") {
-      throw new AgentDockError(
-        "TASK_NOT_ACTIVE",
-        "Only an ACTIVE Task can be cancelled.",
-        { status: task.status },
-      );
-    }
+    return this.mutate(taskId, (task) => {
+      if (task.status === "CANCELLED") {
+        return;
+      }
+      if (task.status !== "ACTIVE") {
+        throw new AgentDockError(
+          "TASK_NOT_ACTIVE",
+          "Only an ACTIVE Task can be cancelled.",
+          { status: task.status },
+        );
+      }
 
-    const now = new Date().toISOString();
-    task.status = "CANCELLED";
-    task.cancelled_at = now;
-    task.updated_at = now;
-    task.approval_grants = [];
-    return this.save(task);
+      const now = new Date().toISOString();
+      task.status = "CANCELLED";
+      task.cancelled_at = now;
+      task.updated_at = now;
+      task.approval_grants = [];
+    }).task;
   }
 
   async cleanup(taskId) {
@@ -141,10 +155,7 @@ export class TaskService {
       );
     }
 
-    if (
-      task.status === "COMPLETED" &&
-      task.outcome === "COMMIT"
-    ) {
+    if (task.status === "COMPLETED" && task.outcome === "COMMIT") {
       if (!task.retention_ref || !task.final_commit_sha) {
         throw new AgentDockError(
           "TASK_COMMIT_NOT_RETAINED",
@@ -169,11 +180,23 @@ export class TaskService {
       });
     }
 
-    const now = new Date().toISOString();
-    task.workspace_cleaned = true;
-    task.cleaned_at = now;
-    task.updated_at = now;
-    return this.save(task);
+    return this.mutate(taskId, (current) => {
+      if (current.workspace_cleaned) return;
+      if (
+        current.status !== "COMPLETED" &&
+        current.status !== "CANCELLED"
+      ) {
+        throw new AgentDockError(
+          "TASK_NOT_FINALIZED",
+          "Task changed state before cleanup could be recorded.",
+          { status: current.status },
+        );
+      }
+      const now = new Date().toISOString();
+      current.workspace_cleaned = true;
+      current.cleaned_at = now;
+      current.updated_at = now;
+    }).task;
   }
 
   async create({ repoPath }) {
@@ -212,7 +235,6 @@ export class TaskService {
       updated_at: now,
     };
 
-    this.#tasks.set(taskId, task);
     this.#store.saveTask(task);
     return task;
   }

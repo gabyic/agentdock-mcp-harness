@@ -17,25 +17,27 @@ export class AuditService {
   }
 
   append(taskId, entry) {
-    const audit = this.#store.loadAudit(taskId);
-    const now = new Date().toISOString();
-    const item = redactObject({
-      sequence: audit.next_sequence,
-      task_id: taskId,
-      timestamp: now,
-      ...entry,
-    });
+    let appended;
+    this.#store.mutateAudit(taskId, (audit) => {
+      const now = new Date().toISOString();
+      appended = redactObject({
+        sequence: audit.next_sequence,
+        task_id: taskId,
+        timestamp: now,
+        ...entry,
+      });
 
-    audit.entries.push(item);
-    audit.next_sequence += 1;
-    if (audit.entries.length > this.#maxEntriesPerTask) {
-      audit.entries.splice(
-        0,
-        audit.entries.length - this.#maxEntriesPerTask,
-      );
-    }
-    this.#store.saveAudit(taskId, audit);
-    return item;
+      audit.entries.push(appended);
+      audit.next_sequence += 1;
+      if (audit.entries.length > this.#maxEntriesPerTask) {
+        audit.entries.splice(
+          0,
+          audit.entries.length - this.#maxEntriesPerTask,
+        );
+      }
+      return audit;
+    });
+    return appended;
   }
 
   get(taskId, { afterSequence = 0, limit = 500 } = {}) {
