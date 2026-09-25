@@ -124,13 +124,13 @@ export class TaskActivityService {
         run_id: lastProcess.process_id,
       };
       recommendedNextAction = "ASSISTANT_REQUIRED";
+    } else if (changedFiles.length > 0) {
+      activityState = "READY_TO_COMMIT";
+      recommendedNextAction = "COMMIT_REQUIRED";
     } else if (evidenceBlocker) {
       activityState = "AWAITING_ASSISTANT";
       currentBlocker = evidenceBlocker;
       recommendedNextAction = "ASSISTANT_REQUIRED";
-    } else if (changedFiles.length > 0) {
-      activityState = "READY_TO_COMMIT";
-      recommendedNextAction = "COMMIT_REQUIRED";
     } else {
       activityState = "READY_TO_FINISH";
       recommendedNextAction = "TASK_FINISH_REQUIRED";
