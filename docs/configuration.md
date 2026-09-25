@@ -44,6 +44,7 @@ Example:
   "version": 1,
   "state": {
     "dir": "~/.local/state/agentdock",
+    "backend": "json",
     "persisted_process_output_bytes": 65536
   },
   "audit": {
@@ -103,6 +104,29 @@ Default:
 
 ```text
 ~/.local/state/agentdock
+```
+
+### `state.backend`
+
+Durable-state adapter used by AgentDock.
+
+Supported values:
+
+- `json` — compatibility/default during the v0.4 expansion phase.
+- `sqlite` — transactional SQLite adapter backed by `agentdock.db` in `state.dir`.
+
+Default for Ticket 01 remains:
+
+```text
+json
+```
+
+SQLite uses built-in Node SQLite; no extra database package is required. When first opened, it idempotently imports supported legacy JSON Task/Process/Audit/Workflow records without deleting or overwriting the legacy files. Production authority cutover to SQLite is deliberately deferred to the next reliability ticket.
+
+Environment override:
+
+```text
+AGENTDOCK_STATE_BACKEND=sqlite
 ```
 
 ### `state.persisted_process_output_bytes`

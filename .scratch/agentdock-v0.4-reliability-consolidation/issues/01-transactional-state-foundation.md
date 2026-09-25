@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] SQLite uses built-in Node SQLite with WAL, foreign keys, busy timeout, explicit schema versioning/migrations, and serialized startup.
-- [ ] Legacy JSON durable state can be imported idempotently without deleting or mutating the legacy source files.
-- [ ] Two independent Node processes can transactionally update the same logical record without losing either update.
-- [ ] JSON remains available only as the compatibility adapter during this expansion ticket; production cutover is explicitly deferred to Ticket 02.
-- [ ] Existing run.start/run.get/run.cancel bounded-output behavior is unchanged.
-- [ ] No new npm database dependency is introduced.
-- [ ] Targeted state tests and the full existing test suite pass.
+- [x] SQLite uses built-in Node SQLite with WAL, foreign keys, busy timeout, explicit schema versioning/migrations, and serialized startup.
+- [x] Legacy JSON durable state can be imported idempotently without deleting or mutating the legacy source files.
+- [x] Two independent Node processes can transactionally update the same logical record without losing either update.
+- [x] JSON remains available only as the compatibility adapter during this expansion ticket; production cutover is explicitly deferred to Ticket 02.
+- [x] Existing run.start/run.get/run.cancel bounded-output behavior is unchanged.
+- [x] No new npm database dependency is introduced.
+- [x] Targeted state tests and the full existing test suite pass.

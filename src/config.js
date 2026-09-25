@@ -20,6 +20,7 @@ export const LOCAL_HOSTNAMES = ["localhost", "127.0.0.1", "[::1]"];
 export const CONFIG_ENV_KEYS = new Set([
   "AGENTDOCK_CONFIG",
   "AGENTDOCK_STATE_DIR",
+  "AGENTDOCK_STATE_BACKEND",
   "AGENTDOCK_PERSISTED_OUTPUT_BYTES",
   "AGENTDOCK_AUDIT_MAX_ENTRIES",
   "AGENTDOCK_POLICY_JSON",
@@ -79,6 +80,7 @@ const AgentDockConfigSchema = z
     state: z
       .object({
         dir: z.string().min(1),
+        backend: z.enum(["json", "sqlite"]).default("json"),
         persisted_process_output_bytes: z
           .number()
           .int()
@@ -237,6 +239,7 @@ function defaultLayer(homeDir) {
     version: CONFIG_SCHEMA_VERSION,
     state: {
       dir: path.join(homeDir, DEFAULT_STATE_RELATIVE_PATH),
+      backend: "json",
       persisted_process_output_bytes:
         DEFAULT_PERSISTED_PROCESS_OUTPUT_BYTES,
     },
@@ -271,6 +274,13 @@ function envLayer(env) {
     layer.state = {
       ...(layer.state ?? {}),
       dir: env.AGENTDOCK_STATE_DIR,
+    };
+  }
+
+  if (env.AGENTDOCK_STATE_BACKEND) {
+    layer.state = {
+      ...(layer.state ?? {}),
+      backend: env.AGENTDOCK_STATE_BACKEND.trim().toLowerCase(),
     };
   }
 

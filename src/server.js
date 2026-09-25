@@ -137,6 +137,7 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
 
   const stateStore = new StateStore({
     stateDir: resolvedConfig.state.dir,
+    backend: resolvedConfig.state.backend,
     maxPersistedOutputBytes:
       resolvedConfig.state.persisted_process_output_bytes,
   });
