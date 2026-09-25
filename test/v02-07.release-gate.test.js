@@ -159,7 +159,15 @@ test("v0.2-07: tag workflow is gated and derives stable/prerelease publication f
   );
   assert.match(workflow, /docs\/releases\/\$\{GITHUB_REF_NAME\}\.md/);
   assert.match(workflow, /gh release create/);
-  assert.match(workflow, /gh release upload/);
+  assert.match(workflow, /Enable release immutability/);
+  assert.match(workflow, /isImmutable/);
+  assert.match(workflow, /RELEASE_IMMUTABILITY_VERIFY=PASS/);
+  assert.match(workflow, /published release \$TAG is mutable; removing the failed release and tag/);
+  assert.match(workflow, /git\/refs\/tags\/\$TAG/);
+  assert.match(workflow, /for delay in 2 4 8/);
+  assert.match(workflow, /assets\[\] \| select\(\.name == \$name\) \| \.digest/);
+  assert.equal(workflow.includes("gh release upload"), false);
+  assert.equal(workflow.includes("--clobber"), false);
   assert.match(workflow, /--verify-tag/);
   assert.match(workflow, /--prerelease/);
   assert.match(workflow, /--latest/);
