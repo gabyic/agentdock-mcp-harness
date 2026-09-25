@@ -171,7 +171,7 @@ test("v0.4 full Plan recovers after its transport process exits while Supervisor
   task = await setup.taskService.create({ repoPath: repo });
   await setup.closeExecution?.();
   setup.stateStore.close?.();
-  const { stdout } = await execFileAsync(process.execPath, [path.join(projectRoot, "test", "fixtures", "plan-crash-starter.mjs"), stateDir, socketPath, task.task_id], { encoding: "utf8" });
+  const { stdout } = await execFileAsync(process.execPath, [path.join(projectRoot, "scripts", "fixtures", "plan-crash-starter.mjs"), stateDir, socketPath, task.task_id], { encoding: "utf8" });
   const { plan_id: planId } = JSON.parse(stdout.trim());
   recovery = createAgentDockRuntime({ config });
   const completed = await waitPlan(recovery, task.task_id, planId, ["READY_TO_COMMIT"], 600);
