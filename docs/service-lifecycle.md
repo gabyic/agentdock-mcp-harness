@@ -293,6 +293,8 @@ This first implementation protects against **ChatGPT/client response-stream inte
 
 A clean Task with no new commit cannot silently become completed. Conversely, `NO_CHANGE` cannot hide a new commit.
 
+When `task.create` declares a Completion Contract, `task.finish` additionally requires a current PASS record for every declared evidence kind. Each `task.evidence.record` entry is bound to the Task worktree's current commit, so a later commit makes older evidence stale. A known FAIL, missing evidence, or stale evidence cannot produce `verification_status: VERIFIED`. `NO_CHANGE` follows the same evidence gate and still requires its explicit reason. Tasks without a caller-defined contract remain lifecycle-compatible and finish as `NOT_REQUIRED`, never as `VERIFIED`.
+
 `task.cleanup` verifies COMMIT retention before removing the worktree. If the durable ref is missing or points somewhere else, cleanup fails closed. This preserves the delivered commit through worktree removal, reflog expiry, and ordinary/aggressive Git garbage collection.
 
 Historical completed Tasks that contain a commit newer than their base HEAD but predate retention metadata are also treated conservatively: cleanup refuses until their result is reconciled instead of risking deletion of the only remaining commit object.

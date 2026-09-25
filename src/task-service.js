@@ -3,6 +3,11 @@ import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { AgentDockError } from "./errors.js";
+import {
+  assertEvidenceKind,
+  evaluateCompletionEvidence,
+  normalizeCompletionContract,
+} from "./completion-evidence.js";
 
 export class TaskService {
   #git;
@@ -112,6 +117,30 @@ export class TaskService {
     }).task;
   }
 
+  recordEvidence(taskId, { kind, status, summary, subjectSha, runId = null, details = null }) {
+    return this.mutate(taskId, (task) => {
+      this.#assertActiveRecord(task);
+      const record = {
+        evidence_id: "evidence_" + randomUUID(),
+        kind: assertEvidenceKind(kind),
+        status,
+        summary: String(summary).trim(),
+        subject_sha: subjectSha,
+        run_id: runId,
+        details,
+        recorded_at: new Date().toISOString(),
+      };
+      task.completion_evidence ??= [];
+      task.completion_evidence.push(record);
+      task.updated_at = record.recorded_at;
+      return record;
+    });
+  }
+
+  completionEvidence(task, subjectSha) {
+    return evaluateCompletionEvidence(task, subjectSha);
+  }
+
   finish(
     taskId,
     {
@@ -123,12 +152,26 @@ export class TaskService {
   ) {
     return this.mutate(taskId, (task) => {
       this.#assertActiveRecord(task);
+      const verification = evaluateCompletionEvidence(task, finalCommitSha);
+      if (!verification.satisfied) {
+        const failed = verification.results.some((result) => result.state === "FAIL");
+        throw new AgentDockError(
+          failed ? "TASK_COMPLETION_EVIDENCE_FAILED" : "TASK_COMPLETION_EVIDENCE_REQUIRED",
+          failed
+            ? "A required completion check is known to be failing."
+            : "Required completion evidence is missing or targets an older implementation result.",
+          { completion: verification },
+        );
+      }
       const now = new Date().toISOString();
       task.status = "COMPLETED";
       task.final_commit_sha = finalCommitSha;
       task.outcome = outcome;
       task.outcome_reason = outcomeReason;
       task.retention_ref = retentionRef;
+      task.verification_status = task.completion_contract ? "VERIFIED" : "NOT_REQUIRED";
+      task.verification_evidence = task.completion_contract ? verification : null;
+      task.verified_at = task.completion_contract ? now : null;
       task.finished_at = now;
       task.updated_at = now;
       task.approval_grants = [];
@@ -223,7 +266,8 @@ export class TaskService {
     }).task;
   }
 
-  async create({ repoPath }) {
+  async create({ repoPath, completionContract = null }) {
+    const normalizedCompletionContract = normalizeCompletionContract(completionContract);
     const source = await this.#git.inspect(repoPath);
     const taskId = "task_" + randomUUID();
     const worktreesDir = path.join(this.#store.stateDir, "worktrees");
@@ -254,6 +298,11 @@ export class TaskService {
       outcome: null,
       outcome_reason: null,
       retention_ref: null,
+      completion_contract: normalizedCompletionContract,
+      completion_evidence: [],
+      verification_status: "PENDING",
+      verification_evidence: null,
+      verified_at: null,
       workspace_cleaned: false,
       created_at: now,
       updated_at: now,

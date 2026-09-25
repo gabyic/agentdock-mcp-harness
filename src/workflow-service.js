@@ -114,10 +114,12 @@ function validateEnum(value, allowed, code, field) {
 export class WorkflowService {
   #store;
   #skillService;
+  #taskService;
 
-  constructor({ stateStore, skillService }) {
+  constructor({ stateStore, skillService, taskService }) {
     this.#store = stateStore;
     this.#skillService = skillService;
+    this.#taskService = taskService;
   }
 
   async #identity(repoPath) {
@@ -285,6 +287,9 @@ export class WorkflowService {
       return_phase: null,
       last_event: "start",
       artifacts: {},
+      implementation_task_ids: [],
+      implementation_evidence: null,
+      review_evidence: null,
       history: [
         {
           at: now,
@@ -375,6 +380,8 @@ export class WorkflowService {
     routeClarity,
     openDecisions,
     artifacts,
+    implementationTaskIds,
+    reviewEvidence,
     note,
   }) {
     const identity = await this.#path(repoPath);
@@ -444,6 +451,25 @@ export class WorkflowService {
           nextArtifacts[cleanKey] = cleanValue;
         }
         workflow.artifacts = nextArtifacts;
+        changed = true;
+      }
+      if (implementationTaskIds !== undefined) {
+        const taskIds = [...new Set(implementationTaskIds.map((value) => String(value).trim()).filter(Boolean))];
+        for (const taskId of taskIds) {
+          const task = this.#taskService.get(taskId);
+          if (task.source_repo !== workflow.repo_path) {
+            throw new AgentDockError("WORKFLOW_TASK_REPO_MISMATCH", "Implementation Task belongs to a different source repository.", {
+              task_id: taskId, task_repo: task.source_repo, workflow_repo: workflow.repo_path,
+            });
+          }
+        }
+        workflow.implementation_task_ids = taskIds;
+        workflow.implementation_evidence = null;
+        workflow.review_evidence = null;
+        changed = true;
+      }
+      if (reviewEvidence !== undefined) {
+        workflow.review_evidence = this.#normalizeReviewEvidence(reviewEvidence);
         changed = true;
       }
 
@@ -535,6 +561,76 @@ export class WorkflowService {
         return "The planned change has passed review.";
       default:
         return "The workflow phase is unknown.";
+    }
+  }
+
+  #captureImplementationEvidence(workflow) {
+    const taskIds = [...new Set(workflow.implementation_task_ids ?? [])];
+    if (taskIds.length === 0) {
+      throw new AgentDockError("WORKFLOW_IMPLEMENTATION_EVIDENCE_REQUIRED", "implementation_complete requires at least one linked implementation Task.");
+    }
+    const units = taskIds.map((taskId) => {
+      const task = this.#taskService.get(taskId);
+      if (task.source_repo !== workflow.repo_path) {
+        throw new AgentDockError("WORKFLOW_TASK_REPO_MISMATCH", "Implementation Task belongs to a different source repository.", { task_id: taskId });
+      }
+      if (task.status !== "COMPLETED") {
+        throw new AgentDockError("WORKFLOW_IMPLEMENTATION_INCOMPLETE", "All implementation Tasks must be COMPLETED before review.", { task_id: taskId, status: task.status });
+      }
+      if (task.completion_contract && task.verification_status !== "VERIFIED") {
+        throw new AgentDockError("WORKFLOW_IMPLEMENTATION_NOT_VERIFIED", "A contracted implementation Task must have verified completion evidence.", { task_id: taskId });
+      }
+      if (task.outcome === "COMMIT" && task.final_commit_sha && task.retention_ref) {
+        return { task_id: taskId, outcome: "COMMIT", final_commit_sha: task.final_commit_sha, retention_ref: task.retention_ref, outcome_reason: null, verification_status: task.verification_status ?? "LEGACY" };
+      }
+      const reason = String(task.outcome_reason ?? "").trim();
+      if (task.outcome === "NO_CHANGE" && reason) {
+        return { task_id: taskId, outcome: "NO_CHANGE", final_commit_sha: null, retention_ref: null, outcome_reason: reason, verification_status: task.verification_status ?? "LEGACY" };
+      }
+      throw new AgentDockError("WORKFLOW_IMPLEMENTATION_EVIDENCE_INVALID", "Implementation Task lacks durable COMMIT or NO_CHANGE evidence.", { task_id: taskId });
+    }).sort((a, b) => a.task_id.localeCompare(b.task_id));
+    return {
+      captured_at: new Date().toISOString(),
+      fingerprint: createHash("sha256").update(JSON.stringify(units)).digest("hex"),
+      target_commits: units.map((unit) => unit.final_commit_sha).filter(Boolean).sort(),
+      units,
+    };
+  }
+
+  #normalizeReviewEvidence(value) {
+    const targetFingerprint = String(value?.target_fingerprint ?? "").trim();
+    if (!/^[0-9a-f]{64}$/.test(targetFingerprint)) {
+      throw new AgentDockError("INVALID_WORKFLOW_REVIEW_EVIDENCE", "review_evidence.target_fingerprint must be a SHA-256 fingerprint.");
+    }
+    const normalizeAxis = (name, axis) => {
+      const result = String(axis?.result ?? "").trim().toUpperCase();
+      const findings = Number(axis?.blocking_findings);
+      if (!["PASS", "FAIL"].includes(result) || !Number.isInteger(findings) || findings < 0) {
+        throw new AgentDockError("INVALID_WORKFLOW_REVIEW_EVIDENCE", name + " must have PASS/FAIL and a non-negative blocking_findings count.");
+      }
+      return { result, blocking_findings: findings };
+    };
+    return {
+      target_fingerprint: targetFingerprint,
+      standards: normalizeAxis("standards", value?.standards),
+      spec: normalizeAxis("spec", value?.spec),
+      note: String(value?.note ?? "").trim() || null,
+      recorded_at: new Date().toISOString(),
+    };
+  }
+
+  #assertReviewPassed(workflow) {
+    const implementation = workflow.implementation_evidence;
+    const review = workflow.review_evidence;
+    if (!implementation) throw new AgentDockError("WORKFLOW_IMPLEMENTATION_EVIDENCE_REQUIRED", "Review cannot pass without captured implementation evidence.");
+    if (!review) throw new AgentDockError("WORKFLOW_REVIEW_EVIDENCE_REQUIRED", "review_passed requires Standards and Spec review evidence.");
+    if (review.target_fingerprint !== implementation.fingerprint) {
+      throw new AgentDockError("WORKFLOW_REVIEW_TARGET_MISMATCH", "Review evidence targets a different implementation snapshot.");
+    }
+    for (const axis of ["standards", "spec"]) {
+      if (review[axis].result !== "PASS" || review[axis].blocking_findings !== 0) {
+        throw new AgentDockError("WORKFLOW_REVIEW_BLOCKING_FINDINGS", "Both review axes must PASS with zero blocking findings.", { axis, ...review[axis] });
+      }
     }
   }
 
@@ -677,14 +773,21 @@ export class WorkflowService {
           break;
         case "implementation_complete":
           if (previousPhase !== "IMPLEMENT") this.#invalidTransition(workflow, event);
+          if ((workflow.implementation_task_ids ?? []).length > 0) {
+            workflow.implementation_evidence = this.#captureImplementationEvidence(workflow);
+          }
+          workflow.review_evidence = null;
           workflow.phase = "REVIEW";
           break;
         case "review_passed":
           if (previousPhase !== "REVIEW") this.#invalidTransition(workflow, event);
+          if (workflow.implementation_evidence) this.#assertReviewPassed(workflow);
           workflow.phase = "DONE";
           break;
         case "review_changes_requested":
           if (previousPhase !== "REVIEW") this.#invalidTransition(workflow, event);
+          workflow.implementation_evidence = null;
+          workflow.review_evidence = null;
           workflow.phase = "IMPLEMENT";
           break;
         case "blocked":

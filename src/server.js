@@ -63,6 +63,7 @@ function safe(handler) {
 export const TOOL_RISK_PROFILES = Object.freeze({
   "repo.inspect": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "task.create": { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  "task.evidence.record": { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   "task.list": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "task.resume": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "task.finish": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
@@ -203,6 +204,7 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
   const workflowService = new WorkflowService({
     stateStore,
     skillService,
+    taskService,
   });
 
   return {
@@ -266,9 +268,15 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     "Create an ACTIVE coding task in a clean detached Git worktree based on source HEAD.",
     {
       repo_path: z.string().min(1).describe("Path inside the source Git repository"),
+      completion_contract: z.object({
+        required: z.array(z.enum([
+          "TARGETED_TESTS", "FULL_SUITE", "STATIC_CHECK", "DIFF_CHECK",
+          "MIGRATION_CHECK", "PROVIDER_CHECK", "REVIEW",
+        ])).min(1),
+      }).optional(),
     },
-    safe(async ({ repo_path }) => {
-      const task = await taskService.create({ repoPath: repo_path });
+    safe(async ({ repo_path, completion_contract }) => {
+      const task = await taskService.create({ repoPath: repo_path, completionContract: completion_contract });
       auditService.append(task.task_id, {
         event: "TASK_CREATED",
         status: task.status,
@@ -279,6 +287,29 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
         created_at: task.created_at,
       });
       return toolResult(task);
+    }),
+  );
+
+  registerTool(
+    server,
+    "task.evidence.record",
+    "Record a durable PASS or FAIL completion check tied to the Task's current Git commit.",
+    {
+      task_id: z.string().min(1),
+      kind: z.enum(["TARGETED_TESTS", "FULL_SUITE", "STATIC_CHECK", "DIFF_CHECK", "MIGRATION_CHECK", "PROVIDER_CHECK", "REVIEW"]),
+      status: z.enum(["PASS", "FAIL"]),
+      summary: z.string().min(1).max(10000),
+      run_id: z.string().min(1).optional(),
+      details: z.record(z.string(), z.unknown()).optional(),
+    },
+    safe(async ({ task_id, kind, status, summary, run_id, details }) => {
+      const task = taskService.assertActive(task_id);
+      const subjectSha = await gitService.currentHead(task.worktree_path);
+      const recorded = taskService.recordEvidence(task_id, {
+        kind, status, summary, subjectSha, runId: run_id, details,
+      });
+      auditService.append(task_id, { event: "TASK_COMPLETION_EVIDENCE_RECORDED", ...recorded.result });
+      return toolResult({ evidence: recorded.result, completion: taskService.completionEvidence(recorded.task, subjectSha) });
     }),
   );
 
@@ -318,6 +349,8 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       const activeProcesses = await processService.activeForTask(task_id);
       const latestPlan = planService.latestForTask(task_id);
       const diff = await gitService.diff(task.worktree_path);
+      const subjectSha = await gitService.currentHead(task.worktree_path);
+      const completionEvidence = taskService.completionEvidence(task, subjectSha);
       const allProcesses = stateStore
         .listProcessMetadata()
         .filter((process) => process.task_id === task_id);
@@ -327,6 +360,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
         activeProcesses,
         latestPlan,
         changedFiles: diff.changed_files,
+        completionEvidence,
       });
       const { process_ids: _processIds, ...taskSummary } = task;
       return toolResult({
@@ -336,6 +370,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
         active_processes: activeProcesses,
         process_history_truncated: processCount > processes.length,
         latest_plan: latestPlan,
+        completion: completionEvidence,
         ...activity,
       });
     }),
@@ -420,6 +455,18 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
             "NO_CHANGE requires a non-empty reason/evidence.",
           );
         }
+      }
+
+      const completion = taskService.completionEvidence(task, finalCommitSha);
+      if (!completion.satisfied) {
+        const failed = completion.results.filter((result) => result.state === "FAIL");
+        throw new AgentDockError(
+          failed.length > 0 ? "TASK_COMPLETION_EVIDENCE_FAILED" : "TASK_COMPLETION_EVIDENCE_REQUIRED",
+          failed.length > 0
+            ? "A required completion check is known to be failing."
+            : "Required completion evidence is missing or targets an older implementation result.",
+          { completion },
+        );
       }
 
       const retentionRef =
@@ -1138,6 +1185,13 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       route_clarity: z.enum(["clear", "foggy", "unknown"]).optional(),
       open_decisions: z.array(z.string()).optional(),
       artifacts: z.record(z.string(), z.string()).optional(),
+      implementation_task_ids: z.array(z.string().min(1)).optional(),
+      review_evidence: z.object({
+        target_fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+        standards: z.object({ result: z.enum(["PASS", "FAIL"]), blocking_findings: z.number().int().min(0) }),
+        spec: z.object({ result: z.enum(["PASS", "FAIL"]), blocking_findings: z.number().int().min(0) }),
+        note: z.string().optional(),
+      }).optional(),
       note: z.string().optional(),
     },
     safe(async ({
@@ -1146,6 +1200,8 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       route_clarity,
       open_decisions,
       artifacts,
+      implementation_task_ids,
+      review_evidence,
       note,
     }) =>
       toolResult(
@@ -1155,6 +1211,8 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
           routeClarity: route_clarity,
           openDecisions: open_decisions,
           artifacts,
+          implementationTaskIds: implementation_task_ids,
+          reviewEvidence: review_evidence,
           note,
         }),
       )),

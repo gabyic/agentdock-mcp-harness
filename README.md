@@ -231,13 +231,14 @@ AgentDock Core
 ### Workspace Task lifecycle
 
 - `task.create`
+- `task.evidence.record`
 - `task.list`
 - `task.resume`
 - `task.finish`
 - `task.cancel`
 - `task.cleanup`
 
-Write-capable Workspace Tasks are Git-native and get an isolated worktree based on the source repository's current `HEAD`. Dirty source repositories are allowed; their uncommitted changes are not copied into the Task. `task.resume` returns a bounded recent-process summary plus active processes and a `recommended_next_action` instead of replaying the entire process history. `task.list` is read-only and exposes stale-by-last-activity status, blockers, worktree presence/size, active Runs, and aggregate state-directory/worktree usage without deleting anything.
+Write-capable Workspace Tasks are Git-native and get an isolated worktree based on the source repository's current `HEAD`. Dirty source repositories are allowed; their uncommitted changes are not copied into the Task. A caller may give `task.create` a Completion Contract and use `task.evidence.record` to persist required PASS/FAIL checks against the current commit. `task.resume` returns a bounded recent-process summary plus active processes and a `recommended_next_action` instead of replaying the entire process history. `task.list` is read-only and exposes stale-by-last-activity status, blockers, worktree presence/size, active Runs, and aggregate state-directory/worktree usage without deleting anything.
 
 ### Files
 

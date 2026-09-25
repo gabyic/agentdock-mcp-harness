@@ -1,6 +1,25 @@
 const ACTIVE_RUN_STATUSES = new Set(["RUNNING", "CANCELLING"]);
 const PENDING_APPROVAL_STATUSES = new Set(["PENDING", "AWAITING_USER"]);
 
+function completionBlocker(task, completionEvidence) {
+  const required = task.completion_contract?.required ?? [];
+  if (required.length === 0) return null;
+  if (completionEvidence) {
+    const blocked = completionEvidence.results.filter((result) => result.state !== "PASS");
+    return blocked.length > 0
+      ? { kind: "ASSISTANT", code: "TASK_COMPLETION_EVIDENCE_REQUIRED", evidence: blocked }
+      : null;
+  }
+  const records = task.completion_evidence ?? [];
+  const blocked = required.filter((kind) => {
+    const latest = [...records].reverse().find((record) => record.kind === kind);
+    return !latest || latest.status !== "PASS";
+  });
+  return blocked.length > 0
+    ? { kind: "ASSISTANT", code: "TASK_COMPLETION_EVIDENCE_REQUIRED", evidence_kinds: blocked }
+    : null;
+}
+
 function timestampMs(value) {
   const parsed = Date.parse(value ?? "");
   return Number.isFinite(parsed) ? parsed : null;
@@ -43,7 +62,7 @@ function lastMeaningfulProgress({ task, processes, latestPlan }) {
 }
 
 export class TaskActivityService {
-  derive({ task, processes = [], activeProcesses, latestPlan, changedFiles = [] }) {
+  derive({ task, processes = [], activeProcesses, latestPlan, changedFiles = [], completionEvidence = null }) {
     const active = activeProcesses ?? processes.filter((process) =>
       ACTIVE_RUN_STATUSES.has(process.status),
     );
@@ -52,6 +71,7 @@ export class TaskActivityService {
       (approval) => approval.status === "AWAITING_USER",
     );
     const lastProcess = mostRecentProcess(processes);
+    const evidenceBlocker = completionBlocker(task, completionEvidence);
     const lastProgressAt = lastMeaningfulProgress({
       task,
       processes,
@@ -103,6 +123,10 @@ export class TaskActivityService {
         code: "RUN_INTERRUPTED",
         run_id: lastProcess.process_id,
       };
+      recommendedNextAction = "ASSISTANT_REQUIRED";
+    } else if (evidenceBlocker) {
+      activityState = "AWAITING_ASSISTANT";
+      currentBlocker = evidenceBlocker;
       recommendedNextAction = "ASSISTANT_REQUIRED";
     } else if (changedFiles.length > 0) {
       activityState = "READY_TO_COMMIT";
