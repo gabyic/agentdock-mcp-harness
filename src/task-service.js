@@ -100,12 +100,23 @@ export class TaskService {
     }).task;
   }
 
-  finish(taskId, { finalCommitSha }) {
+  finish(
+    taskId,
+    {
+      finalCommitSha,
+      outcome,
+      outcomeReason = null,
+      retentionRef = null,
+    },
+  ) {
     return this.mutate(taskId, (task) => {
       this.#assertActiveRecord(task);
       const now = new Date().toISOString();
       task.status = "COMPLETED";
       task.final_commit_sha = finalCommitSha;
+      task.outcome = outcome;
+      task.outcome_reason = outcomeReason;
+      task.retention_ref = retentionRef;
       task.finished_at = now;
       task.updated_at = now;
       task.approval_grants = [];
@@ -144,6 +155,34 @@ export class TaskService {
         "Task must be COMPLETED or CANCELLED before cleanup.",
         { status: task.status },
       );
+    }
+
+    if (task.status === "COMPLETED") {
+      const looksLikeLegacyCommit =
+        task.outcome == null &&
+        task.final_commit_sha &&
+        task.final_commit_sha !== task.base_head;
+      const requiresRetention =
+        task.outcome === "COMMIT" || looksLikeLegacyCommit;
+
+      if (requiresRetention) {
+        if (!task.retention_ref || !task.final_commit_sha) {
+          throw new AgentDockError(
+            "TASK_COMMIT_NOT_RETAINED",
+            "Task cleanup refused because completed commit evidence is incomplete.",
+            {
+              outcome: task.outcome ?? "LEGACY_COMMIT",
+              retention_ref: task.retention_ref ?? null,
+              final_commit_sha: task.final_commit_sha ?? null,
+            },
+          );
+        }
+        await this.#git.assertRetainedTaskCommit({
+          repoRoot: task.source_repo,
+          ref: task.retention_ref,
+          commitSha: task.final_commit_sha,
+        });
+      }
     }
 
     if (existsSync(task.worktree_path)) {
@@ -200,6 +239,9 @@ export class TaskService {
       approvals: [],
       approval_grants: [],
       final_commit_sha: null,
+      outcome: null,
+      outcome_reason: null,
+      retention_ref: null,
       workspace_cleaned: false,
       created_at: now,
       updated_at: now,

@@ -73,6 +73,52 @@ export class GitService {
     return this.#git(worktreePath, ["rev-parse", "HEAD"]);
   }
 
+  taskRetentionRef(taskId) {
+    if (!/^task_[0-9a-f-]{36}$/.test(taskId)) {
+      throw new AgentDockError("INVALID_TASK_ID", "Invalid task_id format.");
+    }
+    return "refs/agentdock/tasks/" + taskId;
+  }
+
+  async retainTaskCommit({ repoRoot, taskId, commitSha }) {
+    const ref = this.taskRetentionRef(taskId);
+    await this.#git(repoRoot, ["update-ref", ref, commitSha]);
+    const target = await this.#git(repoRoot, ["rev-parse", "--verify", ref + "^{commit}"]);
+    if (target !== commitSha) {
+      throw new AgentDockError(
+        "TASK_COMMIT_RETENTION_FAILED",
+        "AgentDock could not anchor the Task commit under its durable ref.",
+        { ref, expected_commit_sha: commitSha, actual_commit_sha: target },
+      );
+    }
+    return ref;
+  }
+
+  async assertRetainedTaskCommit({ repoRoot, ref, commitSha }) {
+    let target;
+    try {
+      target = await this.#git(repoRoot, [
+        "rev-parse",
+        "--verify",
+        ref + "^{commit}",
+      ]);
+    } catch {
+      throw new AgentDockError(
+        "TASK_COMMIT_NOT_RETAINED",
+        "Task cleanup refused because its durable Git ref is missing.",
+        { ref, commit_sha: commitSha },
+      );
+    }
+    if (target !== commitSha) {
+      throw new AgentDockError(
+        "TASK_COMMIT_NOT_RETAINED",
+        "Task cleanup refused because its durable Git ref no longer points at the final commit.",
+        { ref, expected_commit_sha: commitSha, actual_commit_sha: target },
+      );
+    }
+    return { ref, commit_sha: target };
+  }
+
   async createDetachedWorktree({ repoRoot, baseHead, worktreePath }) {
     await this.#git(repoRoot, [
       "worktree",

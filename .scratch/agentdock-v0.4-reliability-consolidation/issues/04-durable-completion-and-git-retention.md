@@ -4,10 +4,10 @@
 
 **Blocked by:** 02: Authoritative Task State Cutover
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] COMMIT completion anchors the final commit under an AgentDock-owned durable Git ref before Task completion.
-- [ ] Worktree cleanup refuses to proceed when required retention evidence is missing.
-- [ ] The retained commit survives worktree cleanup, reflog expiry, and aggressive Git GC.
-- [ ] NO_CHANGE is a first-class outcome with non-empty reason/evidence and no fake commit.
-- [ ] Existing cancel behavior remains compatible.
+- [x] COMMIT completion anchors the final commit under an AgentDock-owned durable Git ref before Task completion.
+- [x] Worktree cleanup refuses to proceed when required retention evidence is missing.
+- [x] The retained commit survives worktree cleanup, reflog expiry, and aggressive Git GC.
+- [x] NO_CHANGE is a first-class outcome with non-empty reason/evidence and no fake commit.
+- [x] Existing cancel behavior remains compatible.

@@ -268,7 +268,7 @@ Successful minimal Plans stop at:
 READY_TO_COMMIT
 ```
 
-They **do not** automatically commit or call `task.finish`. Git-result retention and Completion Contract evidence are separate reliability tickets and must land before automatic finalization is safe.
+They **do not** automatically commit or call `task.finish`. Git-result retention is enforced by `task.finish` before a COMMIT Task becomes terminal; Completion Contract evidence remains a separate reliability ticket before automatic finalization is safe.
 
 A failed, cancelled, interrupted, or timed-out step stops the Plan at:
 
@@ -283,6 +283,19 @@ Existing `task.resume` includes the latest Plan summary without changing its inp
 Minimal Plans intentionally do not accept custom `env` values yet. This avoids creating a new durable secret-storage path before the durable-output/secret-redaction work is complete.
 
 This first implementation protects against **ChatGPT/client response-stream interruption while the owning AgentDock service remains alive**. Automatic Plan takeover/resume after an AgentDock service crash or restart belongs to the later Single Run Supervisor/full Plan Runner work.
+
+## Durable Task completion outcomes
+
+`task.finish` now records one of two durable outcomes:
+
+- `COMMIT` — the Task produced a commit newer than its base HEAD. Before the Task becomes `COMPLETED`, AgentDock anchors that commit under `refs/agentdock/tasks/<task_id>` and stores the retention ref with the Task.
+- `NO_CHANGE` — the Task produced no new commit. This outcome must be explicit and requires a non-empty reason/evidence.
+
+A clean Task with no new commit cannot silently become completed. Conversely, `NO_CHANGE` cannot hide a new commit.
+
+`task.cleanup` verifies COMMIT retention before removing the worktree. If the durable ref is missing or points somewhere else, cleanup fails closed. This preserves the delivered commit through worktree removal, reflog expiry, and ordinary/aggressive Git garbage collection.
+
+Historical completed Tasks that contain a commit newer than their base HEAD but predate retention metadata are also treated conservatively: cleanup refuses until their result is reconciled instead of risking deletion of the only remaining commit object.
 
 ## Test contract
 

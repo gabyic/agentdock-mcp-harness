@@ -319,9 +319,13 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
   registerTool(
     server,
     "task.finish",
-    "Explicitly mark an ACTIVE Task COMPLETED after processes stop and the worktree is committed.",
-    { task_id: z.string().min(1) },
-    safe(async ({ task_id }) => {
+    "Explicitly mark an ACTIVE Task COMPLETED after processes stop and the worktree is clean. A new commit is recorded as COMMIT automatically; an unchanged Task requires explicit outcome=NO_CHANGE with a reason.",
+    {
+      task_id: z.string().min(1),
+      outcome: z.enum(["COMMIT", "NO_CHANGE"]).optional(),
+      reason: z.string().min(1).max(10000).optional(),
+    },
+    safe(async ({ task_id, outcome, reason }) => {
       const task = taskService.assertActive(task_id);
       const active = processService.activeForTask(task_id);
       if (active.length > 0) {
@@ -329,6 +333,15 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
           "TASK_PROCESSES_ACTIVE",
           "Task still has running or cancelling processes.",
           { processes: active },
+        );
+      }
+
+      const latestPlan = planService.latestForTask(task_id);
+      if (latestPlan?.status === "RUNNING") {
+        throw new AgentDockError(
+          "TASK_PLAN_ACTIVE",
+          "Task still has a running deterministic Plan.",
+          { plan_id: latestPlan.plan_id },
         );
       }
 
@@ -342,11 +355,70 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       }
 
       const finalCommitSha = await gitService.currentHead(task.worktree_path);
-      const finished = taskService.finish(task_id, { finalCommitSha });
+      const hasNewCommit = finalCommitSha !== task.base_head;
+      let finalOutcome = outcome ?? null;
+
+      if (finalOutcome === null) {
+        if (hasNewCommit) {
+          finalOutcome = "COMMIT";
+        } else {
+          throw new AgentDockError(
+            "TASK_OUTCOME_REQUIRED",
+            "A Task with no new commit must explicitly finish as NO_CHANGE with a reason.",
+          );
+        }
+      }
+
+      if (finalOutcome === "COMMIT" && !hasNewCommit) {
+        throw new AgentDockError(
+          "TASK_COMMIT_REQUIRED",
+          "COMMIT outcome requires a Task commit newer than the source base HEAD.",
+          {
+            base_head: task.base_head,
+            final_commit_sha: finalCommitSha,
+          },
+        );
+      }
+
+      const cleanReason = String(reason ?? "").trim();
+      if (finalOutcome === "NO_CHANGE") {
+        if (hasNewCommit) {
+          throw new AgentDockError(
+            "TASK_NO_CHANGE_HAS_COMMIT",
+            "NO_CHANGE cannot hide a new Task commit; finish with COMMIT instead.",
+            { final_commit_sha: finalCommitSha },
+          );
+        }
+        if (!cleanReason) {
+          throw new AgentDockError(
+            "TASK_NO_CHANGE_REASON_REQUIRED",
+            "NO_CHANGE requires a non-empty reason/evidence.",
+          );
+        }
+      }
+
+      const retentionRef =
+        finalOutcome === "COMMIT"
+          ? await gitService.retainTaskCommit({
+              repoRoot: task.source_repo,
+              taskId: task_id,
+              commitSha: finalCommitSha,
+            })
+          : null;
+
+      const finished = taskService.finish(task_id, {
+        finalCommitSha,
+        outcome: finalOutcome,
+        outcomeReason: finalOutcome === "NO_CHANGE" ? cleanReason : null,
+        retentionRef,
+      });
       auditService.append(task_id, {
         event: "TASK_FINISHED",
         status: finished.status,
+        outcome: finished.outcome,
+        outcome_reason: finished.outcome_reason,
         final_commit_sha: finished.final_commit_sha,
+        retention_ref: finished.retention_ref,
         finished_at: finished.finished_at,
       });
       return toolResult(finished);
