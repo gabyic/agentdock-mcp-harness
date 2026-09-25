@@ -227,6 +227,10 @@ test("Ticket 04: Task and process diagnostics survive reconnect and AgentDock re
   assert.equal(resumed.task_id, originalTaskId);
   assert.equal(resumed.worktree_path, originalWorktree);
   assert.equal(resumed.status, "ACTIVE");
+  assert.equal("process_ids" in resumed, false);
+  assert.equal(resumed.process_count, 1);
+  assert.equal(resumed.process_history_truncated, false);
+  assert.equal(resumed.recommended_next_action, "COMMIT_REQUIRED");
   assert.equal(resumed.processes.length, 1);
   assert.equal(resumed.processes[0].process_id, failing.process_id);
   assert.equal(resumed.processes[0].status, "EXITED");

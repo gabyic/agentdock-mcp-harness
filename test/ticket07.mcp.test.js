@@ -341,20 +341,33 @@ test("Ticket 07: host access and structured audit preserve live fidelity and red
     return status.status === "EXITED" ? status : null;
   });
 
-  const largeLiveOutput = dataFrom(
-    await first.client.callTool({
-      name: "process.output",
-      arguments: {
-        task_id: task.task_id,
-        process_id: largeProcess.process_id,
-        cursor: 0,
-      },
-    }),
-  );
-  assert.match(largeLiveOutput.stdout_chunk, /^BEGIN7:/);
-  assert.match(largeLiveOutput.stdout_chunk, /:END7 TOKEN=LIVE_OUTPUT_SECRET_7$/);
-  assert.ok(Buffer.byteLength(largeLiveOutput.stdout_chunk, "utf8") > 80000);
-  assert.equal(largeLiveOutput.persisted_output_truncated, false);
+  let largeCursor = 0;
+  let largeLiveText = "";
+  let largePages = 0;
+  while (true) {
+    const page = dataFrom(
+      await first.client.callTool({
+        name: "process.output",
+        arguments: {
+          task_id: task.task_id,
+          process_id: largeProcess.process_id,
+          cursor: largeCursor,
+          max_bytes: 32768,
+          max_chunks: 4,
+        },
+      }),
+    );
+    largePages += 1;
+    assert.ok(Buffer.byteLength(page.stdout_chunk, "utf8") <= 32768);
+    largeLiveText += page.stdout_chunk;
+    largeCursor = page.next_cursor;
+    if (!page.has_more) break;
+    assert.ok(largePages < 20, "bounded output paging must make progress");
+  }
+  assert.match(largeLiveText, /^BEGIN7:/);
+  assert.match(largeLiveText, /:END7 TOKEN=LIVE_OUTPUT_SECRET_7$/);
+  assert.ok(Buffer.byteLength(largeLiveText, "utf8") > 80000);
+  assert.ok(largePages > 1);
 
   // Commit the workspace change so the audit contains a real Git commit.
   const committed = dataFrom(
@@ -461,19 +474,33 @@ test("Ticket 07: host access and structured audit preserve live fidelity and red
   assert.equal(restoredLarge.status, "EXITED");
   assert.equal(restoredLarge.persisted_output_truncated, true);
 
-  const boundedOutput = dataFrom(
-    await second.client.callTool({
-      name: "process.output",
-      arguments: {
-        task_id: task.task_id,
-        process_id: largeProcess.process_id,
-        cursor: 0,
-      },
-    }),
-  );
-  assert.equal(boundedOutput.persisted_output_truncated, true);
-  assert.ok(Buffer.byteLength(boundedOutput.stdout_chunk, "utf8") <= 65536);
-  assert.match(boundedOutput.stdout_chunk, /:END7 TOKEN=LIVE_OUTPUT_SECRET_7$/);
+  let boundedCursor = 0;
+  let boundedText = "";
+  let boundedPages = 0;
+  while (true) {
+    const page = dataFrom(
+      await second.client.callTool({
+        name: "process.output",
+        arguments: {
+          task_id: task.task_id,
+          process_id: largeProcess.process_id,
+          cursor: boundedCursor,
+          max_bytes: 32768,
+          max_chunks: 128,
+        },
+      }),
+    );
+    boundedPages += 1;
+    assert.equal(page.persisted_output_truncated, true);
+    assert.ok(Buffer.byteLength(page.stdout_chunk, "utf8") <= 32768);
+    boundedText += page.stdout_chunk;
+    boundedCursor = page.next_cursor;
+    if (!page.has_more) break;
+    assert.ok(boundedPages < 10, "persisted output paging must make progress");
+  }
+  assert.ok(Buffer.byteLength(boundedText, "utf8") <= 65536);
+  assert.ok(boundedPages > 1);
+  assert.match(boundedText, /:END7 TOKEN=LIVE_OUTPUT_SECRET_7$/);
 
   const auditAfterRestart = dataFrom(
     await second.client.callTool({

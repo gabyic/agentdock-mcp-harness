@@ -97,7 +97,15 @@ test("v0.3-01: skill resource layer installs, searches and reads Git-backed skil
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "agentdock-v03-skills-"));
   const stateDir = path.join(tempRoot, "state");
   const skillRepo = await createFixtureSkillRepo(tempRoot);
-  const runtime = createAgentDockRuntime({ stateDir });
+  const { config: defaultConfig } = loadAgentDockConfig({
+    homeDir: tempRoot,
+    configPath: null,
+    env: {
+      AGENTDOCK_STATE_DIR: stateDir,
+      AGENTDOCK_MATT_AUTO_ROUTING: "false",
+    },
+  });
+  const runtime = createAgentDockRuntime({ config: defaultConfig });
 
   t.after(async () => {
     await rm(tempRoot, { recursive: true, force: true });

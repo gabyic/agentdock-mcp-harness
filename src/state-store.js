@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -69,6 +70,7 @@ export class StateStore {
   #tasksDir;
   #processesDir;
   #auditsDir;
+  #runtimeLeasesDir;
   #maxPersistedOutputBytes;
 
   constructor({
@@ -89,12 +91,14 @@ export class StateStore {
     this.#tasksDir = path.join(this.#stateDir, "tasks");
     this.#processesDir = path.join(this.#stateDir, "processes");
     this.#auditsDir = path.join(this.#stateDir, "audits");
+    this.#runtimeLeasesDir = path.join(this.#stateDir, "runtime-leases");
 
     mkdirSync(this.#stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.#stateDir, 0o700);
     mkdirSync(this.#tasksDir, { recursive: true, mode: 0o700 });
     mkdirSync(this.#processesDir, { recursive: true, mode: 0o700 });
     mkdirSync(this.#auditsDir, { recursive: true, mode: 0o700 });
+    mkdirSync(this.#runtimeLeasesDir, { recursive: true, mode: 0o700 });
   }
 
   get stateDir() {
@@ -145,6 +149,29 @@ export class StateStore {
     return path.join(this.#auditsDir, taskId + ".json");
   }
 
+  runtimeLeasePath(instanceId) {
+    if (!/^runtime_[0-9a-f-]{36}$/.test(instanceId)) {
+      throw new TypeError("Invalid runtime instance id.");
+    }
+    return path.join(this.#runtimeLeasesDir, instanceId + ".json");
+  }
+
+  loadRuntimeLease(instanceId) {
+    return this.#readJson(this.runtimeLeasePath(instanceId));
+  }
+
+  saveRuntimeLease(lease) {
+    this.#writeJson(this.runtimeLeasePath(lease.instance_id), lease);
+  }
+
+  deleteRuntimeLease(instanceId) {
+    try {
+      unlinkSync(this.runtimeLeasePath(instanceId));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+
   loadTask(taskId) {
     return this.#readJson(this.taskPath(taskId));
   }
@@ -178,9 +205,12 @@ export class StateStore {
       signal: record.signal,
       error: record.error,
       cancel_requested: record.cancel_requested,
+      owner_instance_id: record.owner_instance_id,
+      owner_pid: record.owner_pid,
       ...outputState,
     };
     this.#writeJson(this.processPath(record.process_id), serializable);
+    return outputState;
   }
 
   loadAudit(taskId) {

@@ -76,6 +76,9 @@ export const TOOL_RISK_PROFILES = Object.freeze({
   "process.status": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "process.output": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "process.cancel": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  "run.start": { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  "run.get": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "run.cancel": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   "skill.list": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "skill.search": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "skill.read": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -244,20 +247,47 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
   registerTool(
     server,
     "task.resume",
-    "Resume a durable Task by task_id and return restored process metadata.",
-    { task_id: z.string().min(1) },
-    safe(async ({ task_id }) => {
+    "Resume a durable Workspace Task with a compact bounded process summary and the next lifecycle action.",
+    {
+      task_id: z.string().min(1),
+      process_limit: z.number().int().min(1).max(50).optional(),
+    },
+    safe(async ({ task_id, process_limit }) => {
       const task = taskService.resume(task_id);
-      const processes = processService.summariesForTask(task_id);
+      const processCount = task.process_ids?.length ?? 0;
+      const limit = process_limit ?? 5;
+      const processes = processService.summariesForTask(task_id, {
+        limit,
+        compact: true,
+      });
+      const activeProcesses = processService.activeForTask(task_id);
+      const diff = await gitService.diff(task.worktree_path);
+      const recommendedNextAction =
+        activeProcesses.length > 0
+          ? "WAIT_FOR_PROCESS"
+          : diff.changed_files.length > 0
+            ? "COMMIT_REQUIRED"
+            : task.status === "ACTIVE"
+              ? "TASK_FINISH_REQUIRED"
+              : "NONE";
+
       auditService.append(task_id, {
         event: "TASK_RESUMED",
         status: task.status,
         worktree_path: task.worktree_path,
-        process_count: processes.length,
+        process_count: processCount,
+        returned_process_count: processes.length,
+        active_process_count: activeProcesses.length,
+        recommended_next_action: recommendedNextAction,
       });
+      const { process_ids: _processIds, ...taskSummary } = task;
       return toolResult({
-        ...task,
+        ...taskSummary,
+        process_count: processCount,
         processes,
+        active_processes: activeProcesses,
+        process_history_truncated: processCount > processes.length,
+        recommended_next_action: recommendedNextAction,
       });
     }),
   );
@@ -584,18 +614,22 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
   registerTool(
     server,
     "process.output",
-    "Read process stdout/stderr incrementally from a pull cursor.",
+    "Read bounded process stdout/stderr incrementally from a pull cursor.",
     {
       task_id: z.string().min(1),
       process_id: z.string().min(1),
       cursor: z.number().int().min(0).optional(),
+      max_bytes: z.number().int().min(16384).max(32768).optional(),
+      max_chunks: z.number().int().min(1).max(128).optional(),
     },
-    safe(async ({ task_id, process_id, cursor }) =>
+    safe(async ({ task_id, process_id, cursor, max_bytes, max_chunks }) =>
       toolResult(
         processService.output({
           taskId: task_id,
           processId: process_id,
           cursor,
+          maxBytes: max_bytes,
+          maxChunks: max_chunks,
         }),
       )),
   );
@@ -612,6 +646,85 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       toolResult(
         processService.cancel({ taskId: task_id, processId: process_id }),
       )),
+  );
+
+  registerTool(
+    server,
+    "run.start",
+    "Start a durable asynchronous Run inside a Workspace Task. Returns a run_id immediately; use run.get for bounded long-poll output.",
+    {
+      task_id: z.string().min(1),
+      argv: z.array(z.string()).min(1).optional(),
+      shell: z.string().min(1).optional(),
+      cwd: z.string().optional(),
+      env: z.record(z.string(), z.string()).optional(),
+    },
+    safe(async ({ task_id, argv, shell, cwd, env }) => {
+      const started = await processService.start({
+        taskId: task_id,
+        argv,
+        shell,
+        cwd,
+        env,
+      });
+      return toolResult({
+        run_id: started.process_id,
+        task_id: started.task_id,
+        status: started.status,
+        started_at: started.started_at,
+        poll_after_ms: 1000,
+      });
+    }),
+  );
+
+  registerTool(
+    server,
+    "run.get",
+    "Read one bounded page of Run output, optionally waiting up to 10 seconds for output or a terminal state.",
+    {
+      task_id: z.string().min(1),
+      run_id: z.string().min(1),
+      cursor: z.number().int().min(0).optional(),
+      wait_ms: z.number().int().min(0).max(10000).optional(),
+      max_bytes: z.number().int().min(16384).max(32768).optional(),
+      max_chunks: z.number().int().min(1).max(128).optional(),
+    },
+    safe(async ({
+      task_id,
+      run_id,
+      cursor,
+      wait_ms,
+      max_bytes,
+      max_chunks,
+    }) => {
+      const result = await processService.wait({
+        taskId: task_id,
+        processId: run_id,
+        cursor,
+        waitMs: wait_ms,
+        maxBytes: max_bytes,
+        maxChunks: max_chunks,
+      });
+      const { chunks: _chunks, process_id: _processId, ...runResult } = result;
+      return toolResult({ run_id, ...runResult });
+    }),
+  );
+
+  registerTool(
+    server,
+    "run.cancel",
+    "Cancel a Run owned by this AgentDock execution runtime.",
+    {
+      task_id: z.string().min(1),
+      run_id: z.string().min(1),
+    },
+    safe(async ({ task_id, run_id }) => {
+      const cancelled = processService.cancel({
+        taskId: task_id,
+        processId: run_id,
+      });
+      return toolResult({ run_id, ...cancelled });
+    }),
   );
 
 

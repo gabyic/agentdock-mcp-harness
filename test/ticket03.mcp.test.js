@@ -127,6 +127,9 @@ test("Ticket 03: async process lifecycle supports cursor output, cancel, argv an
     "process.status",
     "process.output",
     "process.cancel",
+    "run.start",
+    "run.get",
+    "run.cancel",
   ]) {
     assert.equal(toolNames.has(required), true, "missing MCP tool " + required);
   }
@@ -137,6 +140,117 @@ test("Ticket 03: async process lifecycle supports cursor output, cancel, argv an
       arguments: { repo_path: repoDir },
     }),
   );
+
+  const quickRun = dataFrom(
+    await client.callTool({
+      name: "run.start",
+      arguments: {
+        task_id: task.task_id,
+        argv: [
+          process.execPath,
+          "-e",
+          "setTimeout(() => process.stdout.write('run-wrapper-ok\\n'), 80)",
+        ],
+      },
+    }),
+  );
+  assert.match(quickRun.run_id, /^proc_[0-9a-f-]{36}$/);
+  assert.equal(quickRun.task_id, task.task_id);
+  assert.equal(quickRun.status, "RUNNING");
+
+  const quickRunResult = dataFrom(
+    await client.callTool({
+      name: "run.get",
+      arguments: {
+        task_id: task.task_id,
+        run_id: quickRun.run_id,
+        cursor: 0,
+        wait_ms: 2000,
+        max_bytes: 32768,
+        max_chunks: 4,
+      },
+    }),
+  );
+  assert.equal(quickRunResult.run_id, quickRun.run_id);
+  assert.equal("process_id" in quickRunResult, false);
+  assert.equal("chunks" in quickRunResult, false);
+  assert.match(quickRunResult.stdout_chunk, /run-wrapper-ok/);
+  assert.ok(["RUNNING", "EXITED"].includes(quickRunResult.status));
+
+  const noisyRun = dataFrom(
+    await client.callTool({
+      name: "run.start",
+      arguments: {
+        task_id: task.task_id,
+        argv: [process.execPath, "-e", "process.stdout.write('y'.repeat(100000))"],
+      },
+    }),
+  );
+  let noisyCursor = 0;
+  let noisyText = "";
+  let noisyPages = 0;
+  while (true) {
+    const page = dataFrom(
+      await client.callTool({
+        name: "run.get",
+        arguments: {
+          task_id: task.task_id,
+          run_id: noisyRun.run_id,
+          cursor: noisyCursor,
+          wait_ms: 1000,
+          max_bytes: 16384,
+          max_chunks: 4,
+        },
+      }),
+    );
+    noisyPages += 1;
+    assert.equal("chunks" in page, false);
+    assert.equal("process_id" in page, false);
+    assert.ok(Buffer.byteLength(page.stdout_chunk, "utf8") <= 16384);
+    noisyText += page.stdout_chunk;
+    noisyCursor = page.next_cursor;
+    if (page.status === "EXITED" && !page.has_more) break;
+    assert.ok(noisyPages < 20, "Run output paging must make progress");
+  }
+  assert.equal(noisyText.length, 100000);
+  assert.ok(noisyPages > 1);
+
+  const cancellableRun = dataFrom(
+    await client.callTool({
+      name: "run.start",
+      arguments: {
+        task_id: task.task_id,
+        shell: "sleep 30",
+      },
+    }),
+  );
+  const runCancel = dataFrom(
+    await client.callTool({
+      name: "run.cancel",
+      arguments: {
+        task_id: task.task_id,
+        run_id: cancellableRun.run_id,
+      },
+    }),
+  );
+  assert.equal(runCancel.run_id, cancellableRun.run_id);
+  assert.equal(runCancel.cancel_requested, true);
+
+  const runCancelled = await waitFor(async () => {
+    const result = dataFrom(
+      await client.callTool({
+        name: "run.get",
+        arguments: {
+          task_id: task.task_id,
+          run_id: cancellableRun.run_id,
+          cursor: 0,
+          wait_ms: 250,
+        },
+      }),
+    );
+    return result.status === "CANCELLED" ? result : null;
+  });
+  assert.equal(runCancelled.status, "CANCELLED");
 
   const longProcess = dataFrom(
     await client.callTool({

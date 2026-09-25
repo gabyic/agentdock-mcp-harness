@@ -3,25 +3,194 @@ import { spawn } from "node:child_process";
 import { AgentDockError } from "./errors.js";
 import { resolveExistingTaskPath } from "./workspace-paths.js";
 
+const ACTIVE_STATUSES = new Set(["RUNNING", "CANCELLING"]);
+const OUTPUT_CHUNK_BYTES = 16 * 1024;
+const DEFAULT_OUTPUT_PAGE_BYTES = OUTPUT_CHUNK_BYTES;
+const DEFAULT_OUTPUT_PAGE_CHUNKS = 4;
+const MAX_OUTPUT_PAGE_BYTES = 32 * 1024;
+const MAX_OUTPUT_PAGE_CHUNKS = 128;
+const DEFAULT_LIVE_OUTPUT_BYTES = 1024 * 1024;
+const DEFAULT_LEASE_HEARTBEAT_MS = 1000;
+const DEFAULT_LEASE_STALE_MS = 30000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function splitUtf8Text(text, maxBytes = OUTPUT_CHUNK_BYTES) {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return [text];
+
+  const parts = [];
+  let chars = [];
+  let bytes = 0;
+
+  for (const char of text) {
+    const size = Buffer.byteLength(char, "utf8");
+    if (chars.length > 0 && bytes + size > maxBytes) {
+      parts.push(chars.join(""));
+      chars = [];
+      bytes = 0;
+    }
+    chars.push(char);
+    bytes += size;
+  }
+
+  if (chars.length > 0) parts.push(chars.join(""));
+  return parts;
+}
+
+function outputBytes(chunks) {
+  return (chunks ?? []).reduce(
+    (total, chunk) => total + Buffer.byteLength(String(chunk.text ?? ""), "utf8"),
+    0,
+  );
+}
+
+function terminalStatus(status) {
+  return !ACTIVE_STATUSES.has(status);
+}
+
 export class ProcessService {
   #tasks;
   #store;
   #approval;
   #audit;
   #processes = new Map();
+  #instanceId;
+  #instanceStartedAt;
+  #leaseHeartbeatMs;
+  #leaseStaleMs;
+  #leaseTimer;
+  #maxLiveOutputBytes;
 
-  constructor({ taskService, stateStore, approvalService, auditService }) {
+  constructor({
+    taskService,
+    stateStore,
+    approvalService,
+    auditService,
+    instanceId,
+    leaseHeartbeatMs = DEFAULT_LEASE_HEARTBEAT_MS,
+    leaseStaleMs = DEFAULT_LEASE_STALE_MS,
+    maxLiveOutputBytes,
+  }) {
     this.#tasks = taskService;
     this.#store = stateStore;
     this.#approval = approvalService;
     this.#audit = auditService;
+
+    if (!Number.isInteger(leaseHeartbeatMs) || leaseHeartbeatMs < 100) {
+      throw new TypeError("leaseHeartbeatMs must be an integer >= 100.");
+    }
+    if (!Number.isInteger(leaseStaleMs) || leaseStaleMs <= leaseHeartbeatMs) {
+      throw new TypeError("leaseStaleMs must be greater than leaseHeartbeatMs.");
+    }
+
+    const configuredLiveBytes =
+      maxLiveOutputBytes ??
+      Math.max(
+        DEFAULT_LIVE_OUTPUT_BYTES,
+        stateStore.maxPersistedOutputBytes ?? 0,
+      );
+    if (!Number.isInteger(configuredLiveBytes) || configuredLiveBytes < 64 * 1024) {
+      throw new TypeError("maxLiveOutputBytes must be an integer >= 65536.");
+    }
+
+    this.#instanceId = instanceId ?? "runtime_" + randomUUID();
+    this.#instanceStartedAt = new Date().toISOString();
+    this.#leaseHeartbeatMs = leaseHeartbeatMs;
+    this.#leaseStaleMs = leaseStaleMs;
+    this.#maxLiveOutputBytes = configuredLiveBytes;
+
+    this.#touchLease();
+    this.#leaseTimer = setInterval(
+      () => this.#touchLease(),
+      this.#leaseHeartbeatMs,
+    );
+    this.#leaseTimer.unref?.();
+  }
+
+  get instanceId() {
+    return this.#instanceId;
+  }
+
+  #touchLease() {
+    this.#store.saveRuntimeLease({
+      instance_id: this.#instanceId,
+      pid: process.pid,
+      started_at: this.#instanceStartedAt,
+      heartbeat_at: new Date().toISOString(),
+    });
+  }
+
+  #releaseLease() {
+    if (this.#leaseTimer) {
+      clearInterval(this.#leaseTimer);
+      this.#leaseTimer = null;
+    }
+    this.#store.deleteRuntimeLease(this.#instanceId);
+  }
+
+  #pidAlive(pid) {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      if (error?.code === "EPERM") return true;
+      if (error?.code === "ESRCH") return false;
+      return false;
+    }
+  }
+
+  #ownerState(instanceId) {
+    if (!instanceId) return "DEAD";
+    if (instanceId === this.#instanceId) return "LOCAL";
+
+    const lease = this.#store.loadRuntimeLease(instanceId);
+    if (!lease) return "DEAD";
+
+    if (!this.#pidAlive(Number(lease.pid))) return "DEAD";
+
+    const heartbeatAt = Date.parse(lease.heartbeat_at);
+    if (
+      !Number.isFinite(heartbeatAt) ||
+      Date.now() - heartbeatAt > this.#leaseStaleMs
+    ) {
+      return "STALE";
+    }
+    return "ALIVE";
+  }
+
+  #persist(record) {
+    const persisted = this.#store.saveProcess(record);
+    record.persisted_output_truncated =
+      persisted.persisted_output_truncated ?? false;
+    record.persisted_output_bytes = persisted.persisted_output_bytes ?? 0;
+    return persisted;
+  }
+
+  #interruptLostOwner(record) {
+    record.status = "INTERRUPTED";
+    record.ended_at ??= new Date().toISOString();
+    record.error ??=
+      "AgentDock restarted or lost ownership of the running process.";
+    record.remote_owner = false;
+    record.remote_owner_stale = false;
+    this.#persist(record);
+    this.#audit?.append(record.task_id, {
+      event: "PROCESS_INTERRUPTED",
+      process_id: record.process_id,
+      pid: record.pid,
+      status: record.status,
+      cwd: record.cwd,
+      ended_at: record.ended_at,
+      reason: record.error,
+    });
   }
 
   #restore(processId) {
     const snapshot = this.#store.loadProcess(processId);
-    if (!snapshot) {
-      return null;
-    }
+    if (!snapshot) return null;
 
     const record = {
       ...snapshot,
@@ -30,26 +199,29 @@ export class ProcessService {
       next_output_cursor:
         snapshot.next_output_cursor ?? (snapshot.output?.length ?? 0),
       output_total_bytes: snapshot.output_total_bytes ?? 0,
+      retained_output_bytes: outputBytes(snapshot.output ?? []),
       persisted_output_truncated:
         snapshot.persisted_output_truncated ?? false,
+      live_output_truncated:
+        (snapshot.output_floor_cursor ?? 0) > 0,
       child: null,
+      remote_owner: false,
+      remote_owner_stale: false,
     };
 
-    if (record.status === "RUNNING" || record.status === "CANCELLING") {
-      record.status = "INTERRUPTED";
-      record.ended_at ??= new Date().toISOString();
-      record.error ??=
-        "AgentDock restarted or lost ownership of the running process.";
-      this.#store.saveProcess(record);
-      this.#audit?.append(record.task_id, {
-        event: "PROCESS_INTERRUPTED",
-        process_id: record.process_id,
-        pid: record.pid,
-        status: record.status,
-        cwd: record.cwd,
-        ended_at: record.ended_at,
-        reason: record.error,
-      });
+    if (ACTIVE_STATUSES.has(record.status)) {
+      const ownerState =
+        record.owner_instance_id &&
+        record.owner_instance_id !== this.#instanceId
+          ? this.#ownerState(record.owner_instance_id)
+          : "DEAD";
+
+      if (ownerState === "ALIVE" || ownerState === "STALE") {
+        record.remote_owner = true;
+        record.remote_owner_stale = ownerState === "STALE";
+      } else {
+        this.#interruptLostOwner(record);
+      }
     }
 
     this.#processes.set(processId, record);
@@ -61,7 +233,13 @@ export class ProcessService {
       throw new AgentDockError("INVALID_PROCESS_ID", "Invalid process_id format.");
     }
 
-    const record = this.#processes.get(processId) ?? this.#restore(processId);
+    let record = this.#processes.get(processId);
+    if (!record) {
+      record = this.#restore(processId);
+    } else if (record.remote_owner && ACTIVE_STATUSES.has(record.status)) {
+      record = this.#restore(processId);
+    }
+
     if (!record) {
       throw new AgentDockError(
         "PROCESS_NOT_FOUND",
@@ -71,17 +249,18 @@ export class ProcessService {
     return record;
   }
 
-  #public(record) {
-    return {
+  #ownership(record) {
+    if (record.child) return "LOCAL";
+    if (record.remote_owner && ACTIVE_STATUSES.has(record.status)) return "REMOTE";
+    return "NONE";
+  }
+
+  #public(record, { compact = false } = {}) {
+    const common = {
       process_id: record.process_id,
       task_id: record.task_id,
       pid: record.pid,
       status: record.status,
-      mode: record.mode,
-      argv: record.argv,
-      shell: record.shell,
-      cwd: record.cwd,
-      env: record.env,
       started_at: record.started_at,
       ended_at: record.ended_at,
       exit_code: record.exit_code,
@@ -90,12 +269,34 @@ export class ProcessService {
       cancel_requested: record.cancel_requested,
       persisted_output_truncated:
         record.persisted_output_truncated ?? false,
+      ownership: this.#ownership(record),
+      owner_lease_stale: Boolean(record.remote_owner_stale),
+    };
+
+    if (compact) return common;
+
+    return {
+      ...common,
+      mode: record.mode,
+      argv: record.argv,
+      shell: record.shell,
+      cwd: record.cwd,
+      env: record.env,
     };
   }
 
-  summariesForTask(taskId) {
+  summariesForTask(taskId, { limit, compact = false } = {}) {
     const task = this.#tasks.get(taskId);
-    return (task.process_ids ?? []).map((processId) => {
+    let processIds = task.process_ids ?? [];
+
+    if (limit !== undefined) {
+      if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+        throw new TypeError("limit must be an integer between 1 and 1000.");
+      }
+      processIds = processIds.slice(-limit);
+    }
+
+    return processIds.map((processId) => {
       const record = this.#get(processId);
       if (record.task_id !== taskId) {
         throw new AgentDockError(
@@ -103,14 +304,13 @@ export class ProcessService {
           "Persisted process does not belong to this Task.",
         );
       }
-      return this.#public(record);
+      return this.#public(record, { compact });
     });
   }
 
   activeForTask(taskId) {
-    return this.summariesForTask(taskId).filter(
-      (record) =>
-        record.status === "RUNNING" || record.status === "CANCELLING",
+    return this.summariesForTask(taskId, { compact: true }).filter(
+      (record) => ACTIVE_STATUSES.has(record.status),
     );
   }
 
@@ -119,10 +319,7 @@ export class ProcessService {
     const results = [];
     for (const processId of task.process_ids ?? []) {
       const record = this.#get(processId);
-      if (
-        record.status === "RUNNING" ||
-        record.status === "CANCELLING"
-      ) {
+      if (ACTIVE_STATUSES.has(record.status)) {
         results.push(this.cancel({ taskId, processId }));
       }
     }
@@ -138,23 +335,20 @@ export class ProcessService {
       }
       return true;
     } catch (error) {
-      if (error?.code === "ESRCH") {
-        return false;
-      }
+      if (error?.code === "ESRCH") return false;
       throw error;
     }
   }
 
   async #waitForTerminal(record, timeoutMs) {
     const terminal = () =>
-      !record.child ||
-      !["RUNNING", "CANCELLING"].includes(record.status);
+      !record.child || !ACTIVE_STATUSES.has(record.status);
 
     if (terminal()) return true;
 
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await sleep(25);
       if (terminal()) return true;
     }
     return terminal();
@@ -169,17 +363,14 @@ export class ProcessService {
     }
 
     const owned = [...this.#processes.values()].filter(
-      (record) =>
-        record.child &&
-        (record.status === "RUNNING" ||
-          record.status === "CANCELLING"),
+      (record) => record.child && ACTIVE_STATUSES.has(record.status),
     );
 
     for (const record of owned) {
       if (record.status === "RUNNING") {
         record.cancel_requested = true;
         record.status = "CANCELLING";
-        this.#store.saveProcess(record);
+        this.#persist(record);
         this.#audit?.append(record.task_id, {
           event: "PROCESS_CANCEL_REQUESTED",
           process_id: record.process_id,
@@ -194,32 +385,46 @@ export class ProcessService {
     }
 
     await Promise.all(
-      owned.map((record) =>
-        this.#waitForTerminal(record, graceMs),
-      ),
+      owned.map((record) => this.#waitForTerminal(record, graceMs)),
     );
 
     const stubborn = owned.filter(
-      (record) =>
-        record.child &&
-        (record.status === "RUNNING" ||
-          record.status === "CANCELLING"),
+      (record) => record.child && ACTIVE_STATUSES.has(record.status),
     );
     for (const record of stubborn) {
       this.#signalOwned(record, "SIGKILL");
     }
 
     await Promise.all(
-      stubborn.map((record) =>
-        this.#waitForTerminal(record, killWaitMs),
-      ),
+      stubborn.map((record) => this.#waitForTerminal(record, killWaitMs)),
     );
+
+    this.#releaseLease();
 
     return {
       requested: owned.length,
       forced: stubborn.length,
       processes: owned.map((record) => this.#public(record)),
     };
+  }
+
+  #trimLiveOutput(record) {
+    while (
+      record.retained_output_bytes > this.#maxLiveOutputBytes &&
+      record.output.length > 1
+    ) {
+      const removed = record.output.shift();
+      record.retained_output_bytes -= Buffer.byteLength(
+        String(removed?.text ?? ""),
+        "utf8",
+      );
+      record.live_output_truncated = true;
+    }
+
+    record.output_floor_cursor =
+      record.output.length > 0
+        ? record.output[0].cursor
+        : record.next_output_cursor;
   }
 
   async start({
@@ -297,15 +502,21 @@ export class ProcessService {
       signal: null,
       error: null,
       cancel_requested: false,
+      owner_instance_id: this.#instanceId,
+      owner_pid: process.pid,
       output: [],
       output_floor_cursor: 0,
       next_output_cursor: 0,
       output_total_bytes: 0,
+      retained_output_bytes: 0,
       persisted_output_truncated: false,
+      live_output_truncated: false,
+      remote_owner: false,
+      remote_owner_stale: false,
       child,
     };
     this.#processes.set(processId, record);
-    this.#store.saveProcess(record);
+    this.#persist(record);
     this.#tasks.addProcess(taskId, processId);
 
     this.#audit?.append(taskId, {
@@ -319,18 +530,24 @@ export class ProcessService {
       cwd_scope: record.cwd_scope,
       env,
       started_at: record.started_at,
+      owner_instance_id: this.#instanceId,
     });
 
     const append = (stream, chunk) => {
       const text = chunk.toString("utf8");
-      record.output.push({
-        cursor: record.next_output_cursor,
-        stream,
-        text,
-      });
-      record.next_output_cursor += 1;
-      record.output_total_bytes += Buffer.byteLength(text, "utf8");
-      this.#store.saveProcess(record);
+      for (const part of splitUtf8Text(text)) {
+        const size = Buffer.byteLength(part, "utf8");
+        record.output.push({
+          cursor: record.next_output_cursor,
+          stream,
+          text: part,
+        });
+        record.next_output_cursor += 1;
+        record.output_total_bytes += size;
+        record.retained_output_bytes += size;
+      }
+      this.#trimLiveOutput(record);
+      this.#persist(record);
     };
 
     child.stdout.on("data", (chunk) => append("stdout", chunk));
@@ -341,7 +558,8 @@ export class ProcessService {
       record.error = error.message;
       record.ended_at = new Date().toISOString();
       record.child = null;
-      this.#store.saveProcess(record);
+      record.remote_owner = false;
+      this.#persist(record);
       this.#audit?.append(taskId, {
         event: "PROCESS_FAILED",
         process_id: processId,
@@ -365,7 +583,8 @@ export class ProcessService {
       record.signal = signal;
       record.ended_at ??= new Date().toISOString();
       record.child = null;
-      this.#store.saveProcess(record);
+      record.remote_owner = false;
+      this.#persist(record);
       this.#audit?.append(taskId, {
         event: "PROCESS_ENDED",
         process_id: processId,
@@ -393,7 +612,13 @@ export class ProcessService {
     return this.#public(record);
   }
 
-  output({ taskId, processId, cursor = 0 }) {
+  output({
+    taskId,
+    processId,
+    cursor = 0,
+    maxBytes = DEFAULT_OUTPUT_PAGE_BYTES,
+    maxChunks = DEFAULT_OUTPUT_PAGE_CHUNKS,
+  }) {
     const record = this.#get(processId);
     if (record.task_id !== taskId) {
       throw new AgentDockError(
@@ -402,22 +627,65 @@ export class ProcessService {
       );
     }
 
+    if (
+      !Number.isInteger(maxBytes) ||
+      maxBytes < OUTPUT_CHUNK_BYTES ||
+      maxBytes > MAX_OUTPUT_PAGE_BYTES
+    ) {
+      throw new AgentDockError(
+        "INVALID_OUTPUT_PAGE_SIZE",
+        "max_bytes must be an integer between 16384 and 32768.",
+      );
+    }
+    if (
+      !Number.isInteger(maxChunks) ||
+      maxChunks < 1 ||
+      maxChunks > MAX_OUTPUT_PAGE_CHUNKS
+    ) {
+      throw new AgentDockError(
+        "INVALID_OUTPUT_PAGE_CHUNKS",
+        "max_chunks must be an integer between 1 and 128.",
+      );
+    }
+
     const floor = record.output_floor_cursor ?? 0;
-    const next = record.next_output_cursor ?? record.output.length;
-    if (!Number.isInteger(cursor) || cursor < 0 || cursor > next) {
+    const availableEnd = record.next_output_cursor ?? record.output.length;
+    if (
+      !Number.isInteger(cursor) ||
+      cursor < 0 ||
+      cursor > availableEnd
+    ) {
       throw new AgentDockError(
         "INVALID_OUTPUT_CURSOR",
         "Cursor is outside the available process output range.",
         {
           output_floor_cursor: floor,
-          next_cursor: next,
+          available_next_cursor: availableEnd,
         },
       );
     }
 
     const effectiveCursor = Math.max(cursor, floor);
-    const chunks = record.output.filter(
+    const available = record.output.filter(
       (chunk) => (chunk.cursor ?? 0) >= effectiveCursor,
+    );
+
+    const chunks = [];
+    let bytes = 0;
+    for (const chunk of available) {
+      if (chunks.length >= maxChunks) break;
+      const size = Buffer.byteLength(String(chunk.text ?? ""), "utf8");
+      if (chunks.length > 0 && bytes + size > maxBytes) break;
+      chunks.push(chunk);
+      bytes += size;
+    }
+
+    const nextCursor =
+      chunks.length > 0
+        ? (chunks[chunks.length - 1].cursor ?? effectiveCursor) + 1
+        : effectiveCursor;
+    const hasMore = available.some(
+      (chunk) => (chunk.cursor ?? 0) >= nextCursor,
     );
 
     return {
@@ -427,8 +695,11 @@ export class ProcessService {
       cursor,
       effective_cursor: effectiveCursor,
       output_floor_cursor: floor,
-      next_cursor: next,
+      next_cursor: nextCursor,
+      available_next_cursor: availableEnd,
+      has_more: hasMore,
       truncated_before_cursor: cursor < floor,
+      live_output_truncated: record.live_output_truncated ?? false,
       persisted_output_truncated:
         record.persisted_output_truncated ?? false,
       chunks,
@@ -445,6 +716,44 @@ export class ProcessService {
     };
   }
 
+  async wait({
+    taskId,
+    processId,
+    cursor = 0,
+    waitMs = 5000,
+    maxBytes = DEFAULT_OUTPUT_PAGE_BYTES,
+    maxChunks = DEFAULT_OUTPUT_PAGE_CHUNKS,
+  }) {
+    if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 10000) {
+      throw new AgentDockError(
+        "INVALID_WAIT_TIMEOUT",
+        "wait_ms must be an integer between 0 and 10000.",
+      );
+    }
+
+    const deadline = Date.now() + waitMs;
+    while (true) {
+      const page = this.output({
+        taskId,
+        processId,
+        cursor,
+        maxBytes,
+        maxChunks,
+      });
+      if (
+        page.chunks.length > 0 ||
+        terminalStatus(page.status) ||
+        Date.now() >= deadline
+      ) {
+        return {
+          ...page,
+          poll_after_ms: terminalStatus(page.status) ? 0 : 1000,
+        };
+      }
+      await sleep(Math.min(100, Math.max(1, deadline - Date.now())));
+    }
+  }
+
   cancel({ taskId, processId }) {
     const record = this.#get(processId);
     if (record.task_id !== taskId) {
@@ -454,13 +763,25 @@ export class ProcessService {
       );
     }
 
+    if (record.remote_owner && ACTIVE_STATUSES.has(record.status)) {
+      throw new AgentDockError(
+        "PROCESS_NOT_OWNED",
+        "The process is owned by another live AgentDock runtime.",
+        {
+          process_id: processId,
+          status: record.status,
+          ownership: "REMOTE",
+        },
+      );
+    }
+
     if (record.status !== "RUNNING") {
       return this.#public(record);
     }
 
     record.cancel_requested = true;
     record.status = "CANCELLING";
-    this.#store.saveProcess(record);
+    this.#persist(record);
     this.#audit?.append(taskId, {
       event: "PROCESS_CANCEL_REQUESTED",
       process_id: processId,
@@ -471,7 +792,6 @@ export class ProcessService {
     });
 
     this.#signalOwned(record, "SIGTERM");
-
     return this.#public(record);
   }
 }

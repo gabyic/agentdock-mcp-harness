@@ -114,7 +114,7 @@ The model reasons about the software problem instead of repeatedly rebuilding sh
 
 Browser sessions, MCP connections, OAuth proxies, and remote services can restart.
 
-AgentDock persists Task and process metadata so the same `task_id` can resume after a reconnect or AgentDock restart. A process that was running before a restart is explicitly restored as `INTERRUPTED`, never falsely reported as still running.
+AgentDock persists Workspace Task and Run/process metadata so the same `task_id` can resume after a reconnect or AgentDock restart. Each running process records an execution-owner lease: another live AgentDock runtime may observe it as remotely owned without rewriting its state, while a process whose owner actually disappears is reconciled to `INTERRUPTED`.
 
 ### 5. AI coding should not pollute your source checkout
 
@@ -226,7 +226,7 @@ AgentDock Core
 
 ## v0.1 capabilities
 
-### Task lifecycle
+### Workspace Task lifecycle
 
 - `task.create`
 - `task.resume`
@@ -234,7 +234,7 @@ AgentDock Core
 - `task.cancel`
 - `task.cleanup`
 
-Write-capable tasks are Git-native and get an isolated worktree based on the source repository's current `HEAD`. Dirty source repositories are allowed; their uncommitted changes are not copied into the Task.
+Write-capable Workspace Tasks are Git-native and get an isolated worktree based on the source repository's current `HEAD`. Dirty source repositories are allowed; their uncommitted changes are not copied into the Task. `task.resume` returns a bounded recent-process summary plus active processes and a `recommended_next_action` instead of replaying the entire process history.
 
 ### Files
 
@@ -247,16 +247,24 @@ Relative paths resolve against the Task worktree. Explicit absolute paths access
 
 `file.patch` uses optimistic concurrency through a SHA-256 returned by `file.read`; stale edits fail with `PATCH_CONFLICT`.
 
-### Processes
+### Runs and process compatibility
+
+Preferred long-running execution surface:
+
+- `run.start`
+- `run.get`
+- `run.cancel`
+
+A Run is one asynchronous execution inside a Workspace Task. `run.start` returns a durable `run_id` immediately; `run.get` provides bounded cursor-based output with an optional long-poll of at most 10 seconds; `run.cancel` cancels a locally owned Run. This interface is intentionally shaped so it can map onto MCP Tasks as client support matures.
+
+The lower-level compatibility/debug surface remains available:
 
 - `process.start`
 - `process.status`
 - `process.output`
 - `process.cancel`
 
-Processes are asynchronous, Task-scoped, and support explicit argv or shell mode. Output is pulled incrementally with cursor semantics.
-
-Persisted diagnostic output is bounded; live output preserves fidelity.
+Process output is paged. New live output is retained in a bounded in-memory window, persisted diagnostic output keeps a bounded tail, and no normal output call is allowed to replay an unbounded command transcript.
 
 ### Git
 
