@@ -58,10 +58,7 @@ async function probe(url, timeoutMs) {
       body = null;
     }
 
-    const healthy =
-      response.ok &&
-      body?.status === "ok" &&
-      body?.transport === "streamable-http";
+    const healthy = response.ok && isReadyHealthPayload(body);
 
     return {
       healthy,
@@ -70,7 +67,7 @@ async function probe(url, timeoutMs) {
       response: body,
       error: healthy
         ? null
-        : "Health endpoint did not report AgentDock status=ok.",
+        : "Health endpoint did not report ready SQLite state and Run Supervisor.",
     };
   } catch (error) {
     return {
@@ -86,6 +83,15 @@ async function probe(url, timeoutMs) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export function isReadyHealthPayload(body) {
+  return (
+    body?.status === "ok" &&
+    body?.transport === "streamable-http" &&
+    body?.state_backend === "sqlite" &&
+    body?.supervisor?.ready === true
+  );
 }
 
 export async function runHealthCheck({

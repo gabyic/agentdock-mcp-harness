@@ -10,6 +10,7 @@ import {
 import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { AgentDockError } from "./errors.js";
 import {
   redactArgv,
@@ -24,6 +25,28 @@ import {
 
 const SQLITE_SCHEMA_VERSION = 2;
 const DOCUMENT_PART_PATTERN = /^[A-Za-z0-9._-]+$/;
+export const LEGACY_IMPORT_MARKER_ID = "legacy_import_v1";
+
+function legacyDocumentId(entry, { kind, directory }) {
+  if (!entry.name.endsWith(".json")) return null;
+  if (!entry.isFile()) {
+    throw new AgentDockError(
+      "INVALID_LEGACY_STATE_ENTRY",
+      "Legacy state JSON entries must be regular files.",
+      { kind, directory, filename: entry.name },
+    );
+  }
+
+  const id = entry.name.slice(0, -".json".length);
+  if (!DOCUMENT_PART_PATTERN.test(id)) {
+    throw new AgentDockError(
+      "INVALID_LEGACY_STATE_FILENAME",
+      "Legacy state JSON filename contains an unsupported document id.",
+      { kind, directory, filename: entry.name },
+    );
+  }
+  return id;
+}
 
 function persistedOutput(record, maxPersistedOutputBytes, sensitiveValues) {
   const chunks = record.output ?? [];
@@ -156,6 +179,7 @@ export class StateStore {
     stateDir = path.join(os.homedir(), DEFAULT_STATE_RELATIVE_PATH),
     backend = "sqlite",
     maxPersistedOutputBytes = DEFAULT_PERSISTED_PROCESS_OUTPUT_BYTES,
+    importLegacy = undefined,
   } = {}) {
     if (
       !Number.isInteger(maxPersistedOutputBytes) ||
@@ -193,7 +217,10 @@ export class StateStore {
 
     if (this.#backend === "sqlite") {
       this.#openSqlite();
-      this.importLegacyJson();
+      const importComplete = this.loadDocument("system", LEGACY_IMPORT_MARKER_ID);
+      if (importLegacy ?? importComplete?.verified !== true) {
+        this.importLegacyJson();
+      }
     }
   }
 
@@ -502,9 +529,8 @@ export class StateStore {
     );
     let imported = 0;
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const id = entry.name.slice(0, -".json".length);
-      if (!DOCUMENT_PART_PATTERN.test(id)) continue;
+      const id = legacyDocumentId(entry, { kind, directory });
+      if (id === null) continue;
       const filePath = path.join(directory, entry.name);
       const value = this.#readJson(filePath);
       if (value === null) continue;
@@ -545,6 +571,14 @@ export class StateStore {
         "workflow",
         path.join(this.#stateDir, "workflows"),
       );
+      imported += this.#importDirectory(
+        "plan",
+        path.join(this.#documentsDir, "plan"),
+      );
+      imported += this.#importDirectory(
+        "operation",
+        path.join(this.#documentsDir, "operation"),
+      );
       this.#db.exec("COMMIT");
       return { imported, backend: this.#backend };
     } catch (error) {
@@ -555,6 +589,122 @@ export class StateStore {
       }
       throw error;
     }
+  }
+
+  markLegacyImportComplete(details = {}) {
+    this.#assertOpen();
+    if (this.#backend !== "sqlite") {
+      throw new AgentDockError(
+        "SQLITE_STATE_REQUIRED",
+        "Legacy import completion markers require SQLite.",
+      );
+    }
+    const now = new Date().toISOString();
+    return this.saveDocument("system", LEGACY_IMPORT_MARKER_ID, {
+      ...cloneJson(details),
+      completed: true,
+      verified: true,
+      completed_at: now,
+    });
+  }
+
+  legacyImportReport() {
+    this.#assertOpen();
+    if (this.#backend !== "sqlite") {
+      throw new AgentDockError(
+        "SQLITE_STATE_REQUIRED",
+        "Legacy import reporting requires the SQLite state backend.",
+      );
+    }
+
+    const sources = [
+      ["task", this.#tasksDir],
+      ["process", this.#processesDir],
+      ["audit", this.#auditsDir],
+      ["workflow", this.#workflowsDir],
+      ["plan", path.join(this.#documentsDir, "plan")],
+      ["operation", path.join(this.#documentsDir, "operation")],
+    ];
+    const kinds = {};
+    let legacyTotal = 0;
+    let sqliteTotal = 0;
+    let missingTotal = 0;
+    let divergentTotal = 0;
+
+    for (const [kind, directory] of sources) {
+      let entries = [];
+      try {
+        entries = readdirSync(directory, { withFileTypes: true });
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+
+      const sqliteDocuments = new Map(
+        this.listDocuments(kind).map((document) => [document.id, document.value]),
+      );
+      const legacyIds = [];
+      const missingIds = [];
+      const divergentIds = [];
+
+      for (const entry of entries) {
+        const id = legacyDocumentId(entry, { kind, directory });
+        if (id === null) continue;
+        const legacyValue = this.#readJson(path.join(directory, entry.name));
+        if (legacyValue === null) continue;
+        legacyIds.push(id);
+
+        if (!sqliteDocuments.has(id)) {
+          missingIds.push(id);
+          continue;
+        }
+
+        const expected = kind === "process"
+          ? durableProcessSnapshot(
+              { ...legacyValue, process_id: legacyValue.process_id ?? id },
+              this.#maxPersistedOutputBytes,
+            )
+          : legacyValue;
+        const normalizedExpected = JSON.parse(JSON.stringify(expected));
+        if (!isDeepStrictEqual(sqliteDocuments.get(id), normalizedExpected)) {
+          divergentIds.push(id);
+        }
+      }
+
+      legacyIds.sort();
+      missingIds.sort();
+      divergentIds.sort();
+      const sqliteIds = [...sqliteDocuments.keys()].sort();
+      kinds[kind] = {
+        legacy_count: legacyIds.length,
+        sqlite_count: sqliteIds.length,
+        imported_identity_count: legacyIds.length - missingIds.length,
+        missing_in_sqlite: missingIds,
+        divergent_from_legacy: divergentIds,
+        sqlite_only_count: sqliteIds.filter((id) => !legacyIds.includes(id)).length,
+      };
+      legacyTotal += legacyIds.length;
+      sqliteTotal += sqliteIds.length;
+      missingTotal += missingIds.length;
+      divergentTotal += divergentIds.length;
+    }
+
+    const version = Number(
+      this.#db.prepare("PRAGMA user_version").get()?.user_version ?? 0,
+    );
+    const integrity = this.integrityCheck();
+    return {
+      backend: this.#backend,
+      database_path: this.#dbPath,
+      schema_version: version,
+      integrity_check: integrity,
+      identity_complete: missingTotal === 0,
+      content_matches_legacy: divergentTotal === 0,
+      legacy_document_count: legacyTotal,
+      sqlite_document_count: sqliteTotal,
+      missing_document_count: missingTotal,
+      divergent_document_count: divergentTotal,
+      kinds,
+    };
   }
 
   integrityCheck() {

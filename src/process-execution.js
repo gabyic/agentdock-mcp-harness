@@ -42,6 +42,7 @@ export function createProcessExecution({
       processService: client,
       supervisor: null,
       supervisorMode: "client",
+      supervisorStatus: () => remote.status(),
       close: async () => client.shutdownOwned(),
     };
   }
@@ -61,6 +62,7 @@ export function createProcessExecution({
       processService: client,
       supervisor: null,
       supervisorMode: "client",
+      supervisorStatus: () => existing.supervisor.status(),
       close: async () => client.shutdownOwned(),
     };
   }
@@ -97,6 +99,7 @@ export function createProcessExecution({
     processService,
     supervisor,
     supervisorMode: "owner",
+    supervisorStatus: () => supervisor.status(),
     async close({ graceMs = 5000, killWaitMs = 1000 } = {}) {
       try {
         return await supervisor.shutdown({ graceMs, killWaitMs });

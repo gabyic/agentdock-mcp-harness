@@ -144,6 +144,8 @@ The rollback boundary is important: **once authoritative SQLite mutations begin,
 
 Before cutover, or in an isolated single-process compatibility/test environment, explicit JSON mode remains supported.
 
+Use the complete [production cutover and GC procedure](production-cutover-and-gc.md) for the maintenance window, full-state backup, identity cross-check, restart order, canary cleanup, and SQLite rollback boundary.
+
 ### `state.persisted_process_output_bytes`
 
 Maximum diagnostic process-output bytes persisted per Process snapshot.

@@ -35,6 +35,7 @@
     "release:smoke": "./scripts/smoke-release.sh",
     "release:gate": "./scripts/release-gate.sh",
     "service:verify": "node scripts/verify-systemd-unit.mjs",
+    "state:cutover": "node scripts/state-cutover.mjs",
     "test": "node --test",
     "test:ticket01": "node --test test/ticket01.mcp.test.js",
     "acceptance:v0.1": "node --test --test-reporter=spec test/ticket08.acceptance.test.js"

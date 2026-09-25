@@ -123,11 +123,32 @@ export function createAgentDockHttpServer({
         return;
       }
 
-      writeJson(res, 200, {
-        status: "ok",
-        transport: "streamable-http",
-        mode: "stateless",
-      });
+      try {
+        const supervisor = await sharedRuntime.supervisorStatus();
+        writeJson(res, 200, {
+          status: "ok",
+          transport: "streamable-http",
+          mode: "stateless",
+          state_backend: sharedRuntime.stateStore.backend,
+          supervisor: {
+            ready: true,
+            mode: sharedRuntime.supervisorMode,
+            instance_id: supervisor.instance_id,
+          },
+        });
+      } catch (error) {
+        writeJson(res, 503, {
+          status: "degraded",
+          transport: "streamable-http",
+          mode: "stateless",
+          state_backend: sharedRuntime.stateStore.backend,
+          supervisor: {
+            ready: false,
+            mode: sharedRuntime.supervisorMode,
+            error_code: error?.code ?? "SUPERVISOR_UNAVAILABLE",
+          },
+        });
+      }
       return;
     }
 

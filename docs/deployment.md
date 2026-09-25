@@ -304,10 +304,13 @@ agentdock upgrade --source /path/to/new-agentdock
 Then:
 
 ```bash
+systemctl --user restart agentdock-supervisor.service
 systemctl --user restart agentdock-http.service
 agentdock doctor
 agentdock health
 ```
+
+Supervisor must be healthy before the HTTP and MCP/OAuth clients. For a state migration or worktree reclamation, follow [production cutover and GC](production-cutover-and-gc.md) instead of doing an online restart.
 
 Finally refresh the ChatGPT app tool definitions if the MCP tool surface changed.
 

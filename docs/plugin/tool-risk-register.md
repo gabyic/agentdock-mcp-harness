@@ -1,6 +1,6 @@
 # Tool risk register
 
-All 40 tools must expose explicit readOnlyHint, destructiveHint, and openWorldHint values.
+All 42 tools must expose explicit readOnlyHint, destructiveHint, and openWorldHint values.
 
 | Tool | R | D | O | Justification |
 | --- | --- | --- | --- | --- |
@@ -8,6 +8,8 @@ All 40 tools must expose explicit readOnlyHint, destructiveHint, and openWorldHi
 | task.create | F | F | F | creates isolated local worktree |
 | task.evidence.record | F | F | F | appends durable PASS/FAIL evidence tied to current Task commit |
 | task.list | T | F | F | reads durable Task/hygiene/storage status without cleanup |
+| task.reconcile | T | F | F | computes a retention-aware cleanup snapshot without changing Task or Git state |
+| task.gc | F | T | F | removes only explicitly selected finalized worktrees from an unchanged reconciliation snapshot |
 | task.resume | T | F | F | reads durable task |
 | task.finish | F | T | F | irreversibly finalizes task |
 | task.cancel | F | T | F | terminates task lifecycle |

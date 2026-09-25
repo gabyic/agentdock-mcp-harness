@@ -12,7 +12,7 @@
 ## Ready now
 - Remote Streamable HTTP MCP
 - OAuth front door in private deployment
-- Stable 31-tool surface
+- Explicit 42-tool surface
 - Explicit risk annotations for every tool
 - Tool-risk justification register
 - Five positive and three negative review cases

@@ -39,6 +39,32 @@ function pendingApprovals(task) {
   );
 }
 
+function pendingProcessStarts(task, { now = Date.now(), processesById, stateStore }) {
+  return (task.pending_process_starts ?? []).map((reservation) => {
+    const reservedAt = timestampMs(reservation.reserved_at);
+    const durableProcess = processesById.get(reservation.process_id) ?? null;
+    let ownerLease = null;
+    if (reservation.owner_instance_id) {
+      try {
+        ownerLease = stateStore.loadRuntimeLease(reservation.owner_instance_id);
+      } catch {
+        // Invalid/corrupt owner metadata stays visible without breaking hygiene.
+      }
+    }
+    return {
+      process_id: reservation.process_id,
+      owner_instance_id: reservation.owner_instance_id ?? null,
+      reserved_at: reservation.reserved_at ?? null,
+      age_seconds:
+        reservedAt === null
+          ? null
+          : Math.max(0, Math.floor((now - reservedAt) / 1000)),
+      durable_process_status: durableProcess?.status ?? null,
+      owner_heartbeat_at: ownerLease?.heartbeat_at ?? null,
+    };
+  });
+}
+
 function timestampMs(value) {
   const parsed = Date.parse(value ?? "");
   return Number.isFinite(parsed) ? parsed : null;
@@ -105,9 +131,19 @@ function publicPlanStatus(plan) {
   };
 }
 
-function blockersFor({ task, activeProcesses, latestPlan }) {
+function blockersFor({ task, activeProcesses, latestPlan, pendingStarts }) {
   const blockers = [];
   const approvals = pendingApprovals(task);
+
+  if (pendingStarts.length > 0) {
+    blockers.push({
+      kind: "RUN",
+      code: "RUN_START_PENDING",
+      count: pendingStarts.length,
+      process_ids: pendingStarts.map((reservation) => reservation.process_id),
+      reservations: pendingStarts,
+    });
+  }
 
   if (approvals.length > 0) {
     blockers.push({
@@ -181,6 +217,9 @@ export class TaskHygieneService {
       (task) => includeFinalized || task.status === "ACTIVE",
     );
     const processMetadata = this.#stateStore.listProcessMetadata();
+    const processesById = new Map(
+      processMetadata.map((process) => [process.process_id, process]),
+    );
     const activeRuns = activeRunsByTask(processMetadata);
     const processActivity = latestProcessActivityByTask(processMetadata);
     const latestPlans = latestPlansByTask(
@@ -198,9 +237,16 @@ export class TaskHygieneService {
 
     const worktreeSizes = new Map();
     let worktreesBytes = 0;
+    const storageInspectionErrors = [];
     for (const entry of worktreeEntries) {
       const target = path.join(worktreesRoot, entry.name);
-      const usage = await pathSize(target);
+      let usage;
+      try {
+        usage = await pathSize(target);
+      } catch (error) {
+        usage = { exists: true, bytes: 0, error: error?.message ?? String(error) };
+        storageInspectionErrors.push({ path: target, error: usage.error });
+      }
       worktreeSizes.set(entry.name, usage);
       worktreesBytes += usage.bytes;
     }
@@ -214,8 +260,13 @@ export class TaskHygieneService {
     }
     for (const entry of stateEntries) {
       if (entry.name === "worktrees") continue;
-      const usage = await pathSize(path.join(stateDir, entry.name));
-      nonWorktreeStateBytes += usage.bytes;
+      const target = path.join(stateDir, entry.name);
+      try {
+        const usage = await pathSize(target);
+        nonWorktreeStateBytes += usage.bytes;
+      } catch (error) {
+        storageInspectionErrors.push({ path: target, error: error?.message ?? String(error) });
+      }
     }
 
     const taskIds = new Set(allTasks.map((task) => task.task_id));
@@ -230,6 +281,11 @@ export class TaskHygieneService {
 
     const output = [];
     for (const task of tasks) {
+      const pendingStarts = pendingProcessStarts(task, {
+        now,
+        processesById,
+        stateStore: this.#stateStore,
+      });
       const activeProcesses =
         task.status === "ACTIVE" ? activeRuns.get(task.task_id) ?? [] : [];
       const latestPlan = publicPlanStatus(latestPlans.get(task.task_id));
@@ -255,14 +311,28 @@ export class TaskHygieneService {
         task,
         activeProcesses,
         latestPlan,
+        pendingStarts,
       });
-      const worktreeUsage =
-        worktreeSizes.get(path.basename(task.worktree_path)) ??
-        (await pathSize(task.worktree_path));
-      const changedFiles =
-        task.status === "ACTIVE" && worktreeUsage.exists
-          ? (await this.#git.diff(task.worktree_path)).changed_files
-          : [];
+      const expectedPath = path.join(worktreesRoot, task.task_id);
+      let worktreeUsage;
+      let worktreeInspectionError = null;
+      try {
+        worktreeUsage = path.resolve(task.worktree_path) === path.resolve(expectedPath)
+          ? worktreeSizes.get(task.task_id) ?? (await pathSize(task.worktree_path))
+          : await pathSize(task.worktree_path);
+        worktreeInspectionError = worktreeUsage.error ?? null;
+      } catch (error) {
+        worktreeUsage = { exists: true, bytes: 0 };
+        worktreeInspectionError = error?.message ?? String(error);
+      }
+      let changedFiles = [];
+      if (task.status === "ACTIVE" && worktreeUsage.exists && !worktreeInspectionError) {
+        try {
+          changedFiles = (await this.#git.diff(task.worktree_path)).changed_files;
+        } catch (error) {
+          worktreeInspectionError = error?.message ?? String(error);
+        }
+      }
       const taskProcesses = processMetadata.filter(
         (process) => process.task_id === task.task_id,
       );
@@ -276,7 +346,7 @@ export class TaskHygieneService {
       const stale =
         task.status === "ACTIVE" &&
         activeProcesses.length === 0 &&
-        latestPlan?.status !== "RUNNING" &&
+        (latestPlan?.status !== "RUNNING" || pendingStarts.length > 0) &&
         age !== null &&
         age >= staleAfterSeconds;
 
@@ -291,8 +361,11 @@ export class TaskHygieneService {
         worktree_path: task.worktree_path,
         worktree_present: worktreeUsage.exists,
         worktree_bytes: worktreeUsage.bytes,
+        worktree_inspection_error: worktreeInspectionError,
         active_run_count: activeProcesses.length,
         active_run_ids: activeProcesses.map((process) => process.process_id),
+        pending_process_start_count: pendingStarts.length,
+        pending_process_starts: pendingStarts,
         latest_plan_status: latestPlan?.status ?? null,
         pending_approval_count: pendingApprovals(task).length,
         blockers,
@@ -322,6 +395,7 @@ export class TaskHygieneService {
         non_worktree_state_bytes: nonWorktreeStateBytes,
         orphan_worktree_count: orphanWorktreeCount,
         orphan_worktree_bytes: orphanWorktreeBytes,
+        inspection_errors: storageInspectionErrors,
       },
       tasks: output,
     };

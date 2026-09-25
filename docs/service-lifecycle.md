@@ -155,7 +155,12 @@ The health check requires the endpoint to return HTTP success with:
 ```json
 {
   "status": "ok",
-  "transport": "streamable-http"
+  "transport": "streamable-http",
+  "state_backend": "sqlite",
+  "supervisor": {
+    "ready": true,
+    "mode": "client"
+  }
 }
 ```
 
@@ -319,6 +324,12 @@ SQLite schema v2 rewrites existing authoritative Process documents through the s
 - aggregate AgentDock state/worktree usage and orphan-worktree counts.
 
 A stale ACTIVE Task is only surfaced as needing attention. Ticket 05 performs **no automatic cleanup, cancellation, GC, or age-based deletion**.
+
+## Retention-aware reconciliation and GC
+
+`task.reconcile` extends the observational hygiene view with a stable SHA-256 snapshot token and explicit cleanup eligibility. ACTIVE Tasks are never candidates. Finalized Tasks remain blocked while the retention window is open, a Run or Plan is active, an approval or Run start is pending, the worktree is dirty/missing/unregistered, completion metadata contradicts Git history, or a delivered commit lacks its canonical retention ref.
+
+`task.gc` requires the unchanged token and explicit Task ids. It rechecks durable Run state, worktree registration, cleanliness, expected HEAD, and commit retention immediately before using non-force worktree removal. Repository-wide prune and orphan deletion are intentionally outside this operation. Per-Task results and failures are audited. The production maintenance, backup, smoke, and rollback contract is documented in [production-cutover-and-gc.md](production-cutover-and-gc.md).
 
 ## Truthful Task activity
 

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { realpath } from "node:fs/promises";
+import { open, realpath, unlink } from "node:fs/promises";
+import path from "node:path";
 import { promisify } from "node:util";
 import { AgentDockError } from "./errors.js";
 
@@ -80,6 +81,61 @@ export class GitService {
     return "refs/agentdock/tasks/" + taskId;
   }
 
+  taskGcSafetyRef(taskId) {
+    if (!/^task_[0-9a-f-]{36}$/.test(taskId)) {
+      throw new AgentDockError("INVALID_TASK_ID", "Invalid task_id format.");
+    }
+    return "refs/agentdock/gc-safety/" + taskId;
+  }
+
+  async retainGcSafetyCommit({ repoRoot, taskId, commitSha }) {
+    const ref = this.taskGcSafetyRef(taskId);
+    let existing = null;
+    try {
+      existing = await this.#git(repoRoot, ["rev-parse", "--verify", ref]);
+    } catch {
+      // The normal first-GC path creates the ref below.
+    }
+    if (existing && existing !== commitSha) {
+      throw new AgentDockError(
+        "TASK_GC_SAFETY_REF_CONFLICT",
+        "Automatic GC refuses to overwrite an existing recovery ref.",
+        { ref, expected_commit_sha: commitSha, actual_commit_sha: existing },
+      );
+    }
+    if (!existing) {
+      try {
+        await this.#git(repoRoot, [
+          "update-ref",
+          ref,
+          commitSha,
+          "0".repeat(commitSha.length),
+        ]);
+      } catch (error) {
+        let raced = null;
+        try {
+          raced = await this.#git(repoRoot, ["rev-parse", "--verify", ref]);
+        } catch {
+          // Preserve a deterministic fail-closed error below.
+        }
+        if (raced !== commitSha) {
+          throw new AgentDockError(
+            "TASK_GC_SAFETY_REF_CONFLICT",
+            "Automatic GC could not create its recovery ref without overwriting another value.",
+            {
+              ref,
+              expected_commit_sha: commitSha,
+              actual_commit_sha: raced,
+              cause: error?.message ?? String(error),
+            },
+          );
+        }
+      }
+    }
+    await this.assertRetainedTaskCommit({ repoRoot, ref, commitSha });
+    return ref;
+  }
+
   async retainTaskCommit({ repoRoot, taskId, commitSha }) {
     const ref = this.taskRetentionRef(taskId);
     await this.#git(repoRoot, ["update-ref", ref, commitSha]);
@@ -148,6 +204,37 @@ export class GitService {
     }
 
     return { head: worktreeHead, clean: true };
+  }
+
+  async assertRegisteredWorktree({ repoRoot, worktreePath }) {
+    const output = await this.#git(repoRoot, [
+      "worktree",
+      "list",
+      "--porcelain",
+      "-z",
+    ]);
+    const expected = await realpath(worktreePath);
+    const listed = output
+      .split("\0")
+      .filter((field) => field.startsWith("worktree "))
+      .map((field) => field.slice("worktree ".length));
+    const resolved = await Promise.all(listed.map(async (candidate) => {
+      try {
+        return await realpath(candidate);
+      } catch {
+        return path.resolve(candidate);
+      }
+    }));
+    const matches = resolved
+      .filter((candidate) => candidate === expected);
+    if (matches.length !== 1) {
+      throw new AgentDockError(
+        "TASK_WORKTREE_NOT_REGISTERED",
+        "Automatic cleanup requires one matching registered Git worktree.",
+        { worktree_path: expected, match_count: matches.length },
+      );
+    }
+    return { worktree_path: expected, match_count: 1 };
   }
 
   async diff(worktreePath) {
@@ -219,17 +306,64 @@ export class GitService {
     };
   }
 
-  async removeWorktree({ repoRoot, worktreePath }) {
-    await this.#git(repoRoot, [
-      "worktree",
-      "remove",
-      "--force",
-      worktreePath,
-    ]);
-    await this.#git(repoRoot, ["worktree", "prune"]);
-    return {
-      removed: true,
-      worktree_path: worktreePath,
-    };
+  async removeWorktree({ repoRoot, worktreePath, force = true, prune = true, expectedHead = null }) {
+    let headLock = null;
+    let headLockPath = null;
+    try {
+      if (expectedHead) {
+        const gitDir = await this.#git(worktreePath, ["rev-parse", "--absolute-git-dir"]);
+        headLockPath = path.join(gitDir, "HEAD.lock");
+        try {
+          headLock = await open(headLockPath, "wx", 0o600);
+        } catch (error) {
+          if (error?.code === "EEXIST") {
+            throw new AgentDockError(
+              "TASK_GC_HEAD_LOCKED",
+              "Automatic GC refuses a worktree while another Git operation owns HEAD.",
+              { worktree_path: worktreePath },
+            );
+          }
+          throw error;
+        }
+
+        const diff = await this.diff(worktreePath);
+        if (diff.changed_files.length > 0) {
+          throw new AgentDockError(
+            "TASK_GC_WORKTREE_DIRTY",
+            "Automatic GC refuses changes found during the final locked check.",
+            { changed_files: diff.changed_files },
+          );
+        }
+        const actualHead = await this.currentHead(worktreePath);
+        if (actualHead !== expectedHead) {
+          throw new AgentDockError(
+            "TASK_GC_HEAD_MISMATCH",
+            "Automatic GC refuses a HEAD change detected during the final locked check.",
+            { expected_head: expectedHead, actual_head: actualHead },
+          );
+        }
+      }
+
+      await this.#git(repoRoot, [
+        "worktree",
+        "remove",
+        ...(force ? ["--force"] : []),
+        worktreePath,
+      ]);
+      if (prune) {
+        await this.#git(repoRoot, ["worktree", "prune"]);
+      }
+      return {
+        removed: true,
+        worktree_path: worktreePath,
+      };
+    } finally {
+      await headLock?.close().catch(() => {});
+      if (headLockPath) {
+        await unlink(headLockPath).catch((error) => {
+          if (error?.code !== "ENOENT") throw error;
+        });
+      }
+    }
   }
 }

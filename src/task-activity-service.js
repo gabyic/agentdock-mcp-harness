@@ -67,6 +67,7 @@ export class TaskActivityService {
       ACTIVE_RUN_STATUSES.has(process.status),
     );
     const approvals = pendingApprovals(task);
+    const pendingStarts = task.pending_process_starts ?? [];
     const awaitingUser = approvals.filter(
       (approval) => approval.status === "AWAITING_USER",
     );
@@ -85,6 +86,21 @@ export class TaskActivityService {
     if (task.status !== "ACTIVE") {
       activityState = "TERMINAL";
       recommendedNextAction = "NONE";
+    } else if (pendingStarts.length > 0) {
+      activityState = "EXECUTING";
+      currentBlocker = {
+        kind: "RUN",
+        code: "RUN_START_PENDING",
+        process_ids: pendingStarts.map((reservation) => reservation.process_id),
+        owner_instance_ids: [
+          ...new Set(
+            pendingStarts
+              .map((reservation) => reservation.owner_instance_id)
+              .filter(Boolean),
+          ),
+        ],
+      };
+      recommendedNextAction = "WAIT_FOR_PROCESS";
     } else if (latestPlan?.status === "RUNNING") {
       activityState = "VERIFYING";
       recommendedNextAction = "WAIT_FOR_PLAN";
@@ -151,6 +167,7 @@ export class TaskActivityService {
       recommended_next_action: recommendedNextAction,
       last_meaningful_progress_at: lastProgressAt,
       pending_approval_count: approvals.length,
+      pending_process_start_count: pendingStarts.length,
     };
   }
 }

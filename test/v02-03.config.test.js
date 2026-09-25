@@ -496,11 +496,14 @@ test("v0.2-03: main entrypoint follows transport.mode from config file", async (
   const response = await waitForHttp(
     "http://127.0.0.1:" + port + "/healthz",
   );
-  assert.deepEqual(await response.json(), {
-    status: "ok",
-    transport: "streamable-http",
-    mode: "stateless",
-  });
+  const health = await response.json();
+  assert.equal(health.status, "ok");
+  assert.equal(health.transport, "streamable-http");
+  assert.equal(health.mode, "stateless");
+  assert.equal(health.state_backend, "sqlite");
+  assert.equal(health.supervisor?.ready, true);
+  assert.equal(health.supervisor?.mode, "owner");
+  assert.match(health.supervisor?.instance_id, /^runtime_[0-9a-f-]{36}$/);
   assert.match(stderr, /AgentDock Streamable HTTP listening/);
 
   child.kill("SIGTERM");

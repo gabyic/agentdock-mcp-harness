@@ -153,6 +153,12 @@ test("v0.2-02: native stateless Streamable HTTP preserves shared runtime and hos
     status: "ok",
     transport: "streamable-http",
     mode: "stateless",
+    state_backend: "sqlite",
+    supervisor: {
+      ready: true,
+      mode: "owner",
+      instance_id: instance.runtime.processService.instanceId,
+    },
   });
 
   const blocked = await rawGet({

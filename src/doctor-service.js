@@ -6,11 +6,13 @@ import {
   rm,
   unlink,
 } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { loadAgentDockConfig } from "./config.js";
 import { AGENTDOCK_VERSION } from "./version.js";
+import { UnixRunSupervisorClient } from "./run-supervisor-ipc.js";
 
 const execFileAsync = promisify(execFile);
 const STATUS_ORDER = { PASS: 0, WARN: 1, FAIL: 2 };
@@ -308,12 +310,83 @@ function configCheck(result) {
       config_file_loaded: metadata.config_file_loaded,
       env_overrides: metadata.env_overrides,
       state_dir: config.state.dir,
+      state_backend: config.state.backend,
+      supervisor_mode: config.execution.supervisor_mode,
+      supervisor_socket: config.execution.supervisor_socket,
       transport_mode: config.transport.mode,
       policy_rule_count: config.policy.rules.length,
       matt_auto_routing: config.skills.matt_auto_routing,
       matt_router_skill: config.skills.router_skill,
     },
   );
+}
+
+async function stateBackendCheck(config) {
+  if (config.state.backend === "json") {
+    return check(
+      "state_backend",
+      "WARN",
+      "JSON is a compatibility backend, not a multi-runtime production authority.",
+      { backend: "json", state_dir: config.state.dir },
+    );
+  }
+
+  const databasePath = path.join(config.state.dir, "agentdock.db");
+  if (!existsSync(databasePath)) {
+    return check(
+      "state_backend",
+      "WARN",
+      "SQLite is configured but has not been initialized yet.",
+      { backend: "sqlite", database_path: databasePath, initialized: false },
+    );
+  }
+
+  let database;
+  try {
+    const { DatabaseSync } = await import("node:sqlite");
+    database = new DatabaseSync(databasePath, { readOnly: true, timeout: 5000 });
+    const integrity = database.prepare("PRAGMA integrity_check").get()?.integrity_check ?? null;
+    const schemaVersion = Number(database.prepare("PRAGMA user_version").get()?.user_version ?? 0);
+    return check(
+      "state_backend",
+      integrity === "ok" ? "PASS" : "FAIL",
+      integrity === "ok" ? "Authoritative SQLite state passed integrity check." : "SQLite integrity check failed.",
+      { backend: "sqlite", database_path: databasePath, initialized: true, schema_version: schemaVersion, integrity_check: integrity },
+    );
+  } catch (error) {
+    return check(
+      "state_backend",
+      "FAIL",
+      "Authoritative SQLite state could not be inspected.",
+      { backend: "sqlite", database_path: databasePath, error: error?.message ?? String(error) },
+    );
+  } finally {
+    database?.close();
+  }
+}
+
+async function supervisorCheck(config) {
+  const client = new UnixRunSupervisorClient({
+    socketPath: config.execution.supervisor_socket,
+    requestTimeoutMs: 1000,
+  });
+  try {
+    const status = await client.status();
+    return check(
+      "run_supervisor",
+      "PASS",
+      "Run Supervisor is reachable.",
+      { configured_mode: config.execution.supervisor_mode, socket_path: config.execution.supervisor_socket, instance_id: status.instance_id },
+    );
+  } catch (error) {
+    const required = config.execution.supervisor_mode === "client";
+    return check(
+      "run_supervisor",
+      required ? "FAIL" : "WARN",
+      required ? "Configured Run Supervisor is unavailable." : "Run Supervisor is not currently reachable.",
+      { configured_mode: config.execution.supervisor_mode, socket_path: config.execution.supervisor_socket, error_code: error?.code ?? "SUPERVISOR_UNAVAILABLE" },
+    );
+  }
 }
 
 function configFailureCheck(error, requestedPath) {
@@ -350,6 +423,8 @@ export async function runDoctor({
     });
     checks.push(configCheck(configResult));
     checks.push(await stateDirectoryCheck(configResult.config));
+    checks.push(await stateBackendCheck(configResult.config));
+    checks.push(await supervisorCheck(configResult.config));
     checks.push(transportCheck(configResult.config));
     checks.push(policyCheck(configResult.config));
   } catch (error) {

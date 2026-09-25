@@ -87,6 +87,8 @@ It reports only safe metadata:
 - whether the file was loaded;
 - names of active `AGENTDOCK_*` overrides;
 - state directory;
+- authoritative state backend and SQLite integrity/schema status;
+- configured Run Supervisor mode/socket and live readiness;
 - transport mode;
 - policy rule count.
 
@@ -149,6 +151,8 @@ Overall: WARN
 [WARN] sudo — Passwordless sudo is unavailable; Core does not require it.
 [PASS] config — Configuration validated using defaults/environment; no config file was loaded.
 [PASS] state_directory — State directory is writable.
+[PASS] state_backend — Authoritative SQLite state passed integrity check.
+[PASS] run_supervisor — Run Supervisor is reachable.
 [PASS] transport — Transport is stdio.
 [PASS] policy — Policy configuration is valid.
 ```

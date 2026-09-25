@@ -76,6 +76,8 @@ test("v0.2-04: doctor reports deterministic core diagnostics without requiring s
     "sudo",
     "config",
     "state_directory",
+    "state_backend",
+    "run_supervisor",
     "transport",
     "policy",
   ]) {
@@ -87,6 +89,8 @@ test("v0.2-04: doctor reports deterministic core diagnostics without requiring s
   assert.equal(checks.get("git_worktree").status, "PASS");
   assert.equal(checks.get("config").status, "PASS");
   assert.equal(checks.get("state_directory").status, "PASS");
+  assert.equal(checks.get("state_backend").details.backend, "sqlite");
+  assert.equal(checks.get("run_supervisor").status, "WARN");
   assert.equal(checks.get("transport").details.mode, "stdio");
   assert.equal(checks.get("policy").details.rule_count, 1);
   assert.equal(["PASS", "WARN"].includes(checks.get("sudo").status), true);
@@ -156,6 +160,7 @@ test("v0.2-04: doctor CLI emits parseable JSON and exits zero for warnings", asy
   assert.equal(configCheck.details.config_path, configPath);
   assert.equal(configCheck.details.config_file_loaded, true);
   assert.equal(configCheck.details.policy_rule_count, 1);
+  assert.equal(configCheck.details.state_backend, "sqlite");
   assert.equal(configCheck.details.matt_auto_routing, false);
   assert.equal(configCheck.details.matt_router_skill, "ask-matt");
 });

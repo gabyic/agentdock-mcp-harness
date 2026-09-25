@@ -15,6 +15,7 @@ import { SkillService } from "./skill-service.js";
 import { StateStore } from "./state-store.js";
 import { TaskHygieneService } from "./task-hygiene-service.js";
 import { TaskActivityService } from "./task-activity-service.js";
+import { TaskReconcileService } from "./task-reconcile-service.js";
 import { TaskService } from "./task-service.js";
 import { WorkflowService } from "./workflow-service.js";
 import { AGENTDOCK_VERSION } from "./version.js";
@@ -65,6 +66,8 @@ export const TOOL_RISK_PROFILES = Object.freeze({
   "task.create": { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   "task.evidence.record": { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   "task.list": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "task.reconcile": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "task.gc": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   "task.resume": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "task.finish": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   "task.cancel": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
@@ -198,6 +201,13 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     gitService,
     taskActivityService,
   });
+  const taskReconcileService = new TaskReconcileService({
+    taskService,
+    stateStore,
+    taskHygieneService,
+    gitService,
+    auditService,
+  });
   const skillService = new SkillService({
     stateStore,
     autoRoutingEnabled: resolvedConfig.skills.matt_auto_routing,
@@ -222,12 +232,14 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     processService,
     runSupervisor: execution.supervisor,
     supervisorMode: execution.supervisorMode,
+    supervisorStatus: execution.supervisorStatus,
     closeExecution: async (options) => {
       planService.close();
       return execution.close(options);
     },
     planService,
     taskHygieneService,
+    taskReconcileService,
     taskActivityService,
     skillService,
     workflowService,
@@ -249,6 +261,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     processService,
     planService,
     taskHygieneService,
+    taskReconcileService,
     taskActivityService,
     skillService,
     workflowService,
@@ -333,6 +346,34 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
           includeFinalized: include_finalized ?? true,
         }),
       )),
+  );
+
+  registerTool(
+    server,
+    "task.reconcile",
+    "Preview retention-aware GC eligibility. ACTIVE Tasks are never selected; stale ACTIVE Tasks are reported as NEEDS_ATTENTION.",
+    {
+      stale_after_seconds: z.number().int().min(60).max(31536000).optional(),
+    },
+    safe(async ({ stale_after_seconds }) =>
+      toolResult(await taskReconcileService.preview({ staleAfterSeconds: stale_after_seconds ?? 3600 }))),
+  );
+
+  registerTool(
+    server,
+    "task.gc",
+    "Clean only explicitly selected finalized Task worktrees from an unchanged task.reconcile snapshot.",
+    {
+      reconcile_token: z.string().regex(/^[0-9a-f]{64}$/),
+      task_ids: z.array(z.string().min(1)).min(1).max(1000),
+      stale_after_seconds: z.number().int().min(60).max(31536000).optional(),
+    },
+    safe(async ({ reconcile_token, task_ids, stale_after_seconds }) =>
+      toolResult(await taskReconcileService.gc({
+        reconcileToken: reconcile_token,
+        taskIds: task_ids,
+        staleAfterSeconds: stale_after_seconds ?? 3600,
+      }))),
   );
 
   registerTool(

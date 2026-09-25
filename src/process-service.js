@@ -12,6 +12,8 @@ const MAX_OUTPUT_PAGE_CHUNKS = 128;
 const DEFAULT_LIVE_OUTPUT_BYTES = 1024 * 1024;
 const DEFAULT_LEASE_HEARTBEAT_MS = 1000;
 const DEFAULT_LEASE_STALE_MS = 30000;
+const REGISTRATION_ABORT_GRACE_MS = 250;
+const REGISTRATION_ABORT_KILL_WAIT_MS = 1000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -110,6 +112,7 @@ export class ProcessService {
       this.#leaseHeartbeatMs,
     );
     this.#leaseTimer.unref?.();
+    this.#recoverPendingProcessStarts();
   }
 
   get instanceId() {
@@ -162,6 +165,48 @@ export class ProcessService {
       return "STALE";
     }
     return "ALIVE";
+  }
+
+  #recoverPendingProcessStarts(taskId = null) {
+    const tasks = taskId ? [this.#tasks.get(taskId)] : this.#tasks.list();
+    for (const task of tasks) {
+      for (const reservation of task.pending_process_starts ?? []) {
+        const processId = reservation?.process_id;
+        if (!/^proc_[0-9a-f-]{36}$/.test(String(processId ?? ""))) continue;
+
+        const snapshot = this.#store.loadProcess(processId);
+        if (!snapshot || snapshot.task_id !== task.task_id) continue;
+
+        const ownerInstanceId =
+          reservation.owner_instance_id ?? snapshot.owner_instance_id ?? null;
+        let ownerState;
+        try {
+          ownerState = this.#ownerState(ownerInstanceId);
+        } catch {
+          continue;
+        }
+        if (ownerState !== "DEAD") continue;
+
+        try {
+          this.#tasks.addProcess(task.task_id, processId, { reserved: true });
+          const recovered = this.#restore(processId);
+          try {
+            this.#audit?.append(task.task_id, {
+              event: "PROCESS_START_REGISTRATION_RECOVERED",
+              process_id: processId,
+              previous_owner_instance_id: ownerInstanceId,
+              recovered_status: recovered?.status ?? snapshot.status ?? null,
+              recovered_at: new Date().toISOString(),
+            });
+          } catch {
+            // Registration recovery is authoritative even if diagnostics fail.
+          }
+        } catch {
+          // Preserve the reservation as a durable fail-closed blocker. Hygiene
+          // exposes it for operator review instead of guessing that no child ran.
+        }
+      }
+    }
   }
 
   #syncIdempotency(record, status = record.status) {
@@ -334,6 +379,7 @@ export class ProcessService {
   }
 
   summariesForTask(taskId, { limit, compact = false } = {}) {
+    this.#recoverPendingProcessStarts(taskId);
     const task = this.#tasks.get(taskId);
     let processIds = task.process_ids ?? [];
 
@@ -363,6 +409,7 @@ export class ProcessService {
   }
 
   cancelAllForTask(taskId) {
+    this.#recoverPendingProcessStarts(taskId);
     const task = this.#tasks.get(taskId);
     const results = [];
     for (const processId of task.process_ids ?? []) {
@@ -386,6 +433,139 @@ export class ProcessService {
       if (error?.code === "ESRCH") return false;
       throw error;
     }
+  }
+
+  async #abortUnregisteredStart(record, registrationError, { persisted }) {
+    const child = record.child;
+    record.cancel_requested = true;
+    record.status = "CANCELLING";
+    record.error =
+      "Run registration failed before ownership became durable: " +
+      (registrationError?.message ?? String(registrationError));
+
+    // Drain pipes while termination is in flight so a noisy child cannot block
+    // on a full pipe before it observes the termination signal.
+    child.stdout?.resume();
+    child.stderr?.resume();
+
+    let finalized = false;
+    let resolveClosed;
+    const closed = new Promise((resolve) => {
+      resolveClosed = resolve;
+    });
+
+    const finalize = (code, signal, childError = null) => {
+      if (finalized) return;
+      finalized = true;
+      record.status = "FAILED";
+      record.exit_code = code ?? record.exit_code ?? null;
+      record.signal = signal ?? record.signal ?? null;
+      record.ended_at = new Date().toISOString();
+      if (childError) {
+        record.error += "; child error: " + childError.message;
+      }
+      record.child = null;
+      record.remote_owner = false;
+
+      if (persisted) {
+        try {
+          this.#persist(record);
+        } catch {
+          // The child is confirmed terminal. Keep repairing Task state below;
+          // a stale RUNNING snapshot remains conservative for later GC.
+        }
+      }
+
+      let registrationRecovered = false;
+      if (persisted) {
+        try {
+          this.#tasks.addProcess(record.task_id, record.process_id, {
+            reserved: true,
+          });
+          registrationRecovered = true;
+        } catch {
+          // A terminal, unlinked diagnostic record is safe. Release the Task
+          // reservation below so a dead child cannot wedge its lifecycle.
+        }
+      }
+      if (!registrationRecovered) {
+        try {
+          this.#tasks.releaseProcessStart(record.task_id, record.process_id);
+        } catch {
+          // A leftover reservation fails closed and is surfaced by hygiene.
+        }
+      }
+
+      try {
+        this.#syncIdempotency(record, "FAILED");
+      } catch {
+        // Preserve the registration error and terminal ownership result.
+      }
+      try {
+        this.#audit?.append(record.task_id, {
+          event: "PROCESS_START_REGISTRATION_FAILED",
+          process_id: record.process_id,
+          owner_instance_id: this.#instanceId,
+          status: record.status,
+          exit_code: record.exit_code,
+          signal: record.signal,
+          error: record.error,
+          ended_at: record.ended_at,
+        });
+      } catch {
+        // Durable process/Task state remains authoritative without audit output.
+      }
+      this.#processes.delete(record.process_id);
+      resolveClosed(true);
+    };
+
+    child.once("error", (error) => {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        finalize(child.exitCode, child.signalCode, error);
+      } else {
+        record.error += "; child error: " + error.message;
+      }
+    });
+    child.once("close", (code, signal) => finalize(code, signal));
+
+    if (child.exitCode !== null || child.signalCode !== null) {
+      finalize(child.exitCode, child.signalCode);
+      return { terminated: true, forced: false };
+    }
+
+    if (persisted) {
+      try {
+        this.#persist(record);
+      } catch {
+        // The reservation remains the authoritative fail-closed guard.
+      }
+    }
+
+    let forced = false;
+    try {
+      this.#signalOwned(record, "SIGTERM");
+    } catch {
+      // Continue to the bounded wait and SIGKILL fallback.
+    }
+    let terminated = await Promise.race([
+      closed,
+      sleep(REGISTRATION_ABORT_GRACE_MS).then(() => false),
+    ]);
+
+    if (!terminated) {
+      forced = true;
+      try {
+        this.#signalOwned(record, "SIGKILL");
+      } catch {
+        // If signalling cannot be proven, retain the reservation indefinitely.
+      }
+      terminated = await Promise.race([
+        closed,
+        sleep(REGISTRATION_ABORT_KILL_WAIT_MS).then(() => false),
+      ]);
+    }
+
+    return { terminated, forced };
   }
 
   async #waitForTerminal(record, timeoutMs) {
@@ -534,6 +714,7 @@ export class ProcessService {
       }
     }
 
+    this.#recoverPendingProcessStarts(taskId);
     this.#tasks.assertActive(taskId);
 
     const location = await resolveExistingTaskPath(
@@ -553,21 +734,45 @@ export class ProcessService {
 
     let processId = "proc_" + randomUUID();
     let operationId = null;
+    let startReserved = false;
+
+    this.#tasks.reserveProcessStart(taskId, processId, {
+      ownerInstanceId: this.#instanceId,
+    });
+    startReserved = true;
 
     if (idempotencyKey !== undefined) {
-      const claim = this.#idempotency.claim({
-        taskId,
-        tool: "process.start",
-        key: idempotencyKey,
-        request: idempotencyRequest,
-        runId: processId,
-        ownerInstanceId: this.#instanceId,
-      });
-      if (!claim.created) {
-        return this.#replayIdempotent(claim.operation, taskId);
+      try {
+        const claim = this.#idempotency.claim({
+          taskId,
+          tool: "process.start",
+          key: idempotencyKey,
+          request: idempotencyRequest,
+          runId: processId,
+          ownerInstanceId: this.#instanceId,
+        });
+        if (!claim.created) {
+          this.#tasks.releaseProcessStart(taskId, processId);
+          startReserved = false;
+          return this.#replayIdempotent(claim.operation, taskId);
+        }
+        if (claim.operation.run_id !== processId) {
+          throw new AgentDockError(
+            "IDEMPOTENCY_RUN_ID_MISMATCH",
+            "A newly claimed Run must keep its reserved process identity.",
+            {
+              reserved_process_id: processId,
+              claimed_process_id: claim.operation.run_id ?? null,
+            },
+          );
+        }
+        operationId = claim.operationId;
+      } catch (error) {
+        if (startReserved) {
+          this.#tasks.releaseProcessStart(taskId, processId);
+        }
+        throw error;
       }
-      operationId = claim.operationId;
-      processId = claim.operation.run_id;
     }
 
     const command = hasArgv ? argv[0] : shell;
@@ -582,6 +787,9 @@ export class ProcessService {
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (error) {
+      if (startReserved) {
+        this.#tasks.releaseProcessStart(taskId, processId);
+      }
       if (operationId) {
         this.#idempotency.mark({
           operationId,
@@ -623,9 +831,19 @@ export class ProcessService {
       remote_owner_stale: false,
       child,
     };
-    this.#processes.set(processId, record);
-    this.#persist(record);
-    this.#tasks.addProcess(taskId, processId);
+    let processPersisted = false;
+    try {
+      this.#processes.set(processId, record);
+      this.#persist(record);
+      processPersisted = true;
+      this.#tasks.addProcess(taskId, processId, { reserved: true });
+      startReserved = false;
+    } catch (error) {
+      await this.#abortUnregisteredStart(record, error, {
+        persisted: processPersisted,
+      });
+      throw error;
+    }
     this.#syncIdempotency(record, "RUNNING");
 
     this.#audit?.append(taskId, {
