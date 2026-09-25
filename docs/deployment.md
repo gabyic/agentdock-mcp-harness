@@ -363,7 +363,7 @@ run.cancel
 
 `run.get` returns bounded output and may long-poll for at most 10 seconds. A period with no new stdout does not by itself mean the process is stuck.
 
-`task.resume` returns a compact status summary and a `recommended_next_action` so the caller can distinguish an active process from a task waiting for commit/finish.
+`task.resume` returns a compact status summary with `activity_state`, `current_blocker`, `last_meaningful_progress_at`, and `recommended_next_action`, so the caller can distinguish real execution, verification, approvals, reasoning barriers, interruption, and commit/finish readiness. Reading the status does not manufacture Task or audit progress.
 
 ### Another runtime reports remote ownership
 

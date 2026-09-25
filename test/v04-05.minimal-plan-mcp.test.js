@@ -153,6 +153,7 @@ test("v0.4 MCP minimal Plan runs independently and task.resume exposes durable p
   );
   assert.equal(resumedWhileRunning.latest_plan.plan_id, started.plan_id);
   assert.equal(resumedWhileRunning.latest_plan.status, "RUNNING");
+  assert.equal(resumedWhileRunning.activity_state, "VERIFYING");
   assert.equal(resumedWhileRunning.recommended_next_action, "WAIT_FOR_PLAN");
 
   let current = started;
@@ -181,6 +182,7 @@ test("v0.4 MCP minimal Plan runs independently and task.resume exposes durable p
     }),
   );
   assert.equal(resumedAfter.latest_plan.status, "READY_TO_COMMIT");
+  assert.equal(resumedAfter.activity_state, "READY_TO_COMMIT");
   assert.equal(resumedAfter.recommended_next_action, "COMMIT_REQUIRED");
 
   const effect = await readFile(

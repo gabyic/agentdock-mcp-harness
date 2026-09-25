@@ -143,10 +143,14 @@ function blockersFor({ task, activeProcesses, latestPlan }) {
 export class TaskHygieneService {
   #tasks;
   #stateStore;
+  #git;
+  #activity;
 
-  constructor({ taskService, stateStore }) {
+  constructor({ taskService, stateStore, gitService, taskActivityService }) {
     this.#tasks = taskService;
     this.#stateStore = stateStore;
+    this.#git = gitService;
+    this.#activity = taskActivityService;
   }
 
   async list({
@@ -247,6 +251,20 @@ export class TaskHygieneService {
       const worktreeUsage =
         worktreeSizes.get(path.basename(task.worktree_path)) ??
         (await pathSize(task.worktree_path));
+      const changedFiles =
+        task.status === "ACTIVE" && worktreeUsage.exists
+          ? (await this.#git.diff(task.worktree_path)).changed_files
+          : [];
+      const taskProcesses = processMetadata.filter(
+        (process) => process.task_id === task.task_id,
+      );
+      const activity = this.#activity.derive({
+        task,
+        processes: taskProcesses,
+        activeProcesses,
+        latestPlan,
+        changedFiles,
+      });
       const stale =
         task.status === "ACTIVE" &&
         activeProcesses.length === 0 &&
@@ -270,6 +288,7 @@ export class TaskHygieneService {
         latest_plan_status: latestPlan?.status ?? null,
         pending_approval_count: pendingApprovals(task).length,
         blockers,
+        ...activity,
         last_activity_at: lastActivityAt,
         last_activity_age_seconds: age,
         age_seconds: age,

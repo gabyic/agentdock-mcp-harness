@@ -4,10 +4,10 @@
 
 **Blocked by:** 02: Authoritative Task State Cutover; 05: Secure Durable Output and Task Hygiene Visibility; 06: Single Run Supervisor
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Lifecycle remains ACTIVE/COMPLETED/CANCELLED while derived activity state distinguishes EXECUTING, AWAITING_ASSISTANT, AWAITING_APPROVAL, AWAITING_USER, VERIFYING, READY_TO_COMMIT, READY_TO_FINISH, INTERRUPTED, and TERMINAL.
-- [ ] Pending approval outranks READY_TO_FINISH in task.resume.
-- [ ] Read-only status/resume calls do not create ordinary durable business/audit progress.
-- [ ] Last meaningful progress excludes observational reads.
-- [ ] Current blocker and recommended next action are consistent with authoritative state.
+- [x] Lifecycle remains ACTIVE/COMPLETED/CANCELLED while derived activity state distinguishes EXECUTING, AWAITING_ASSISTANT, AWAITING_APPROVAL, AWAITING_USER, VERIFYING, READY_TO_COMMIT, READY_TO_FINISH, INTERRUPTED, and TERMINAL.
+- [x] Pending approval outranks READY_TO_FINISH in task.resume.
+- [x] Read-only status/resume calls do not create ordinary durable business/audit progress.
+- [x] Last meaningful progress excludes observational reads.
+- [x] Current blocker and recommended next action are consistent with authoritative state.

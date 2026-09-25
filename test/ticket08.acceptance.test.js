@@ -561,7 +561,11 @@ test("Ticket 08: AgentDock v0.1 automated MCP black-box acceptance", async (t) =
   );
   const events = audit.entries.map((entry) => entry.event);
 
-  assert.ok(events.filter((event) => event === "TASK_RESUMED").length >= 2);
+  assert.equal(
+    events.includes("TASK_RESUMED"),
+    false,
+    "observational task.resume calls must not create business audit events",
+  );
   assert.ok(events.filter((event) => event === "FILE_PATCH").length >= 2);
   for (const requiredEvent of [
     "TASK_CREATED",

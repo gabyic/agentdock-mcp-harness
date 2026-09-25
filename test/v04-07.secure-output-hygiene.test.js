@@ -346,6 +346,10 @@ test("v0.4 MCP task.list is read-only and exposes hygiene/storage fields", async
   assert.equal(typeof found.worktree_present, "boolean");
   assert.equal(typeof found.worktree_bytes, "number");
   assert.ok(Array.isArray(found.blockers));
+  assert.equal(typeof found.activity_state, "string");
+  assert.equal(typeof found.recommended_next_action, "string");
+  assert.ok(Object.hasOwn(found, "current_blocker"));
+  assert.ok(Object.hasOwn(found, "last_meaningful_progress_at"));
   assert.equal(typeof listing.storage.state_dir_bytes, "number");
   assert.equal(typeof listing.storage.worktrees_dir_bytes, "number");
 });

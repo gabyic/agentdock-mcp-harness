@@ -315,6 +315,26 @@ SQLite schema v2 rewrites existing authoritative Process documents through the s
 
 A stale ACTIVE Task is only surfaced as needing attention. Ticket 05 performs **no automatic cleanup, cancellation, GC, or age-based deletion**.
 
+## Truthful Task activity
+
+Workspace Task lifecycle remains deliberately small: `ACTIVE`, `COMPLETED`, or `CANCELLED`. `task.resume` and `task.list` derive a separate `activity_state` from authoritative Task, Run, Plan, approval, and Git facts:
+
+```text
+EXECUTING
+VERIFYING
+AWAITING_APPROVAL
+AWAITING_USER
+AWAITING_ASSISTANT
+INTERRUPTED
+READY_TO_COMMIT
+READY_TO_FINISH
+TERMINAL
+```
+
+The same derivation supplies `current_blocker`, `recommended_next_action`, and `last_meaningful_progress_at`. An active Run or Plan represents real execution; otherwise approval/user blockers outrank commit/finish readiness. Failed Plans and interrupted Runs surface the reasoning barrier instead of pretending the Task is merely idle.
+
+Observational calls are observational: `task.resume`, `task.list`, `process.status`, `run.get`, `plan.get`, `approval.get`, and `audit.get` do not append ordinary business-audit progress or advance the Task's `updated_at`. Repeated reads therefore cannot make a stale Task look active.
+
 ## Test contract
 
 v0.2-06 black-box coverage verifies:

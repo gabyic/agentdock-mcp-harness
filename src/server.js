@@ -14,6 +14,7 @@ import { createProcessExecution } from "./process-execution.js";
 import { SkillService } from "./skill-service.js";
 import { StateStore } from "./state-store.js";
 import { TaskHygieneService } from "./task-hygiene-service.js";
+import { TaskActivityService } from "./task-activity-service.js";
 import { TaskService } from "./task-service.js";
 import { WorkflowService } from "./workflow-service.js";
 import { AGENTDOCK_VERSION } from "./version.js";
@@ -187,9 +188,12 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     processService,
     auditService,
   });
+  const taskActivityService = new TaskActivityService();
   const taskHygieneService = new TaskHygieneService({
     taskService,
     stateStore,
+    gitService,
+    taskActivityService,
   });
   const skillService = new SkillService({
     stateStore,
@@ -217,6 +221,7 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     closeExecution: execution.close,
     planService,
     taskHygieneService,
+    taskActivityService,
     skillService,
     workflowService,
     config: resolvedConfig,
@@ -227,6 +232,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
   const services =
     runtime ?? createAgentDockRuntime({ stateDir, config });
   const {
+    stateStore,
     auditService,
     gitService,
     taskService,
@@ -236,6 +242,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     processService,
     planService,
     taskHygieneService,
+    taskActivityService,
     skillService,
     workflowService,
   } = services;
@@ -311,28 +318,15 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       const activeProcesses = await processService.activeForTask(task_id);
       const latestPlan = planService.latestForTask(task_id);
       const diff = await gitService.diff(task.worktree_path);
-      const recommendedNextAction =
-        latestPlan?.status === "RUNNING"
-          ? "WAIT_FOR_PLAN"
-          : latestPlan?.status === "AWAITING_ASSISTANT"
-            ? "ASSISTANT_REQUIRED"
-            : activeProcesses.length > 0
-              ? "WAIT_FOR_PROCESS"
-              : diff.changed_files.length > 0
-                ? "COMMIT_REQUIRED"
-                : task.status === "ACTIVE"
-                  ? "TASK_FINISH_REQUIRED"
-                  : "NONE";
-
-      auditService.append(task_id, {
-        event: "TASK_RESUMED",
-        status: task.status,
-        worktree_path: task.worktree_path,
-        process_count: processCount,
-        returned_process_count: processes.length,
-        active_process_count: activeProcesses.length,
-        latest_plan_status: latestPlan?.status ?? null,
-        recommended_next_action: recommendedNextAction,
+      const allProcesses = stateStore
+        .listProcessMetadata()
+        .filter((process) => process.task_id === task_id);
+      const activity = taskActivityService.derive({
+        task,
+        processes: allProcesses,
+        activeProcesses,
+        latestPlan,
+        changedFiles: diff.changed_files,
       });
       const { process_ids: _processIds, ...taskSummary } = task;
       return toolResult({
@@ -342,7 +336,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
         active_processes: activeProcesses,
         process_history_truncated: processCount > processes.length,
         latest_plan: latestPlan,
-        recommended_next_action: recommendedNextAction,
+        ...activity,
       });
     }),
   );

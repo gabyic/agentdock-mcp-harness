@@ -510,7 +510,11 @@ test("Ticket 07: host access and structured audit preserve live fidelity and red
       arguments: { task_id: task.task_id, limit: 1000 },
     }),
   );
-  assert.ok(auditAfterRestart.entries.length > auditBeforeRestart.entries.length);
+  assert.equal(
+    auditAfterRestart.entries.length,
+    auditBeforeRestart.entries.length,
+    "restart recovery and observational reads must not manufacture audit progress",
+  );
   assert.equal(
     JSON.stringify(auditAfterRestart).includes(approvalSecret),
     false,
