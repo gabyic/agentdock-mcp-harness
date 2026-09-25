@@ -348,7 +348,7 @@ export class PlanService {
     return current;
   }
 
-  cancel({ taskId, planId }) {
+  async cancel({ taskId, planId }) {
     const plan = this.#load(planId);
     if (plan.task_id !== taskId) {
       throw new AgentDockError(
@@ -366,12 +366,12 @@ export class PlanService {
     const running = next.steps.find((step) => step.status === "RUNNING");
     if (running?.run_id) {
       try {
-        const status = this.#processes.status({
+        const status = await this.#processes.status({
           taskId,
           processId: running.run_id,
         });
         if (status.ownership === "LOCAL") {
-          this.#processes.cancel({
+          await this.#processes.cancel({
             taskId,
             processId: running.run_id,
           });
@@ -491,7 +491,7 @@ export class PlanService {
         plan = this.#load(planId);
         if (plan.cancel_requested) break;
 
-        const status = this.#processes.status({
+        const status = await this.#processes.status({
           taskId: plan.task_id,
           processId: step.run_id,
         });
@@ -508,7 +508,7 @@ export class PlanService {
         ) {
           if (status.ownership === "LOCAL") {
             try {
-              this.#processes.cancel({
+              await this.#processes.cancel({
                 taskId: plan.task_id,
                 processId: step.run_id,
               });

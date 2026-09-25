@@ -173,6 +173,7 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
   const idempotencyService = new IdempotencyService({ stateStore });
   const execution = createProcessExecution({
     mode: resolvedConfig.execution.supervisor_mode,
+    supervisorSocket: resolvedConfig.execution.supervisor_socket,
     taskService,
     stateStore,
     approvalService,
@@ -303,11 +304,11 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       const task = taskService.resume(task_id);
       const processCount = task.process_ids?.length ?? 0;
       const limit = process_limit ?? 5;
-      const processes = processService.summariesForTask(task_id, {
+      const processes = await processService.summariesForTask(task_id, {
         limit,
         compact: true,
       });
-      const activeProcesses = processService.activeForTask(task_id);
+      const activeProcesses = await processService.activeForTask(task_id);
       const latestPlan = planService.latestForTask(task_id);
       const diff = await gitService.diff(task.worktree_path);
       const recommendedNextAction =
@@ -357,7 +358,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     },
     safe(async ({ task_id, outcome, reason }) => {
       const task = taskService.assertActive(task_id);
-      const active = processService.activeForTask(task_id);
+      const active = await processService.activeForTask(task_id);
       if (active.length > 0) {
         throw new AgentDockError(
           "TASK_PROCESSES_ACTIVE",
@@ -462,7 +463,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     { task_id: z.string().min(1) },
     safe(async ({ task_id }) => {
       taskService.assertActive(task_id);
-      const cancelledProcesses = processService.cancelAllForTask(task_id);
+      const cancelledProcesses = await processService.cancelAllForTask(task_id);
       const task = taskService.cancel(task_id);
       auditService.append(task_id, {
         event: "TASK_CANCELLED",
@@ -485,7 +486,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     "Remove the worktree of a COMPLETED or CANCELLED Task while preserving durable Task metadata.",
     { task_id: z.string().min(1) },
     safe(async ({ task_id }) => {
-      const active = processService.activeForTask(task_id);
+      const active = await processService.activeForTask(task_id);
       if (active.length > 0) {
         throw new AgentDockError(
           "TASK_PROCESSES_ACTIVE",
@@ -733,7 +734,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     },
     safe(async ({ task_id, process_id }) =>
       toolResult(
-        processService.status({ taskId: task_id, processId: process_id }),
+        await processService.status({ taskId: task_id, processId: process_id }),
       )),
   );
 
@@ -750,7 +751,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     },
     safe(async ({ task_id, process_id, cursor, max_bytes, max_chunks }) =>
       toolResult(
-        processService.output({
+        await processService.output({
           taskId: task_id,
           processId: process_id,
           cursor,
@@ -770,7 +771,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     },
     safe(async ({ task_id, process_id }) =>
       toolResult(
-        processService.cancel({ taskId: task_id, processId: process_id }),
+        await processService.cancel({ taskId: task_id, processId: process_id }),
       )),
   );
 
@@ -848,7 +849,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       run_id: z.string().min(1),
     },
     safe(async ({ task_id, run_id }) => {
-      const cancelled = processService.cancel({
+      const cancelled = await processService.cancel({
         taskId: task_id,
         processId: run_id,
       });
@@ -915,7 +916,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     },
     safe(async ({ task_id, plan_id }) =>
       toolResult(
-        planService.cancel({
+        await planService.cancel({
           taskId: task_id,
           planId: plan_id,
         }),

@@ -202,6 +202,10 @@ test("v0.2-03: default config discovery and explicit missing config semantics ar
   );
   assert.equal(discovered.config.transport.mode, "http");
   assert.equal(discovered.config.transport.http.port, 3456);
+  assert.equal(
+    discovered.config.execution.supervisor_socket,
+    path.join(tempRoot, "configured-state", "run-supervisor.sock"),
+  );
 
   assert.throws(
     () =>

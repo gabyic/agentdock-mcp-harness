@@ -16,6 +16,7 @@ export const DEFAULT_HTTP_HOST = "127.0.0.1";
 export const DEFAULT_HTTP_PORT = 3100;
 export const DEFAULT_HTTP_PATH = "/mcp";
 export const DEFAULT_HTTP_HEALTH_PATH = "/healthz";
+export const DEFAULT_SUPERVISOR_SOCKET_NAME = "run-supervisor.sock";
 export const LOCAL_HOSTNAMES = ["localhost", "127.0.0.1", "[::1]"];
 export const CONFIG_ENV_KEYS = new Set([
   "AGENTDOCK_CONFIG",
@@ -23,6 +24,7 @@ export const CONFIG_ENV_KEYS = new Set([
   "AGENTDOCK_STATE_BACKEND",
   "AGENTDOCK_PERSISTED_OUTPUT_BYTES",
   "AGENTDOCK_SUPERVISOR_MODE",
+  "AGENTDOCK_SUPERVISOR_SOCKET",
   "AGENTDOCK_AUDIT_MAX_ENTRIES",
   "AGENTDOCK_POLICY_JSON",
   "AGENTDOCK_MATT_AUTO_ROUTING",
@@ -93,6 +95,7 @@ const AgentDockConfigSchema = z
     execution: z
       .object({
         supervisor_mode: z.enum(["auto", "owner", "client"]).default("auto"),
+        supervisor_socket: z.string().min(1),
       })
       .strict()
       .default({}),
@@ -252,6 +255,11 @@ function defaultLayer(homeDir) {
     },
     execution: {
       supervisor_mode: "auto",
+      supervisor_socket: path.join(
+        homeDir,
+        DEFAULT_STATE_RELATIVE_PATH,
+        DEFAULT_SUPERVISOR_SOCKET_NAME,
+      ),
     },
     audit: {
       max_entries_per_task: DEFAULT_AUDIT_MAX_ENTRIES_PER_TASK,
@@ -308,6 +316,12 @@ function envLayer(env) {
   if (env.AGENTDOCK_SUPERVISOR_MODE) {
     layer.execution = {
       supervisor_mode: env.AGENTDOCK_SUPERVISOR_MODE.trim().toLowerCase(),
+    };
+  }
+  if (env.AGENTDOCK_SUPERVISOR_SOCKET) {
+    layer.execution = {
+      ...(layer.execution ?? {}),
+      supervisor_socket: env.AGENTDOCK_SUPERVISOR_SOCKET,
     };
   }
 
@@ -474,6 +488,10 @@ export function loadAgentDockConfig({
     nestedOwn(fileLayer, ["transport", "http", "allowed_origins"]) ||
     nestedOwn(environmentLayer, ["transport", "http", "allowed_origins"]) ||
     nestedOwn(overrides, ["transport", "http", "allowed_origins"]);
+  const supervisorSocketExplicit =
+    nestedOwn(fileLayer, ["execution", "supervisor_socket"]) ||
+    nestedOwn(environmentLayer, ["execution", "supervisor_socket"]) ||
+    nestedOwn(overrides, ["execution", "supervisor_socket"]);
 
   let merged = deepMerge(defaultLayer(homeDir), fileLayer);
   merged = deepMerge(merged, environmentLayer);
@@ -484,6 +502,19 @@ export function loadAgentDockConfig({
     dir: absolutePath(merged.state.dir, {
       homeDir,
       name: "state.dir",
+    }),
+  };
+  if (!supervisorSocketExplicit) {
+    merged.execution.supervisor_socket = path.join(
+      merged.state.dir,
+      DEFAULT_SUPERVISOR_SOCKET_NAME,
+    );
+  }
+  merged.execution = {
+    ...merged.execution,
+    supervisor_socket: absolutePath(merged.execution.supervisor_socket, {
+      homeDir,
+      name: "execution.supervisor_socket",
     }),
   };
 

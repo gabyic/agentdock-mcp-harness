@@ -4,6 +4,10 @@
     "dir": "~/.local/state/agentdock",
     "persisted_process_output_bytes": 65536
   },
+  "execution": {
+    "supervisor_mode": "auto",
+    "supervisor_socket": "~/.local/state/agentdock/run-supervisor.sock"
+  },
   "audit": {
     "max_entries_per_task": 5000
   },

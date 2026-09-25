@@ -3,6 +3,7 @@ import { AgentDockError } from "./errors.js";
 import { ProcessService } from "./process-service.js";
 import { RunSupervisor } from "./run-supervisor.js";
 import { SupervisorProcessClient } from "./supervisor-process-client.js";
+import { UnixRunSupervisorClient } from "./run-supervisor-ipc.js";
 
 const owners = new Map();
 
@@ -25,10 +26,25 @@ export function createProcessExecution({
   leaseHeartbeatMs,
   leaseStaleMs,
   maxLiveOutputBytes,
+  supervisorSocket,
 } = {}) {
   const key = registryKey(stateStore);
   const requestedMode = mode ?? "auto";
   const existing = ownerFor(stateStore);
+
+  if (requestedMode === "client" && !existing) {
+    const remote = new UnixRunSupervisorClient({ socketPath: supervisorSocket });
+    const client = new SupervisorProcessClient({
+      supervisor: remote,
+      stateStore,
+    });
+    return {
+      processService: client,
+      supervisor: null,
+      supervisorMode: "client",
+      close: async () => client.shutdownOwned(),
+    };
+  }
 
   if (requestedMode === "client" || (requestedMode === "auto" && existing)) {
     if (!existing) {

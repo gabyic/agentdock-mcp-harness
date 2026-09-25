@@ -56,6 +56,8 @@ const requireValue = (key, expected) => {
 
 requireValue("Service.Type", "simple");
 requireValue("Service.Environment", "AGENTDOCK_TRANSPORT=http");
+requireValue("Service.Environment", "AGENTDOCK_SUPERVISOR_MODE=client");
+requireValue("Unit.Requires", "agentdock-supervisor.service");
 requireValue(
   "Service.ExecStart",
   "%h/.local/bin/agentdock-mcp",
@@ -71,6 +73,20 @@ requireValue("Service.SendSIGKILL", "yes");
 requireValue("Service.FinalKillSignal", "SIGKILL");
 requireValue("Service.TimeoutStopSec", "15");
 requireValue("Service.UMask", "0077");
+
+const supervisorPath = path.join(path.dirname(unitPath), "agentdock-supervisor.service");
+const supervisorText = await readFile(supervisorPath, "utf8");
+for (const expected of [
+  "Environment=AGENTDOCK_SUPERVISOR_MODE=owner",
+  "ExecStart=%h/.local/bin/agentdock-supervisor",
+  "Restart=always",
+  "KillMode=control-group",
+  "UMask=0077",
+]) {
+  if (!supervisorText.split(/\r?\n/).map((line) => line.trim()).includes(expected)) {
+    throw new Error(supervisorPath + ": expected " + expected);
+  }
+}
 
 const restartValues = entries.get("Service.Restart") ?? [];
 if (restartValues.includes("on-failure")) {

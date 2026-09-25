@@ -48,7 +48,9 @@ export class RunSupervisor {
         case "output":
           return this.#processes.output(args);
         case "waitOutput":
-          return await this.#processes.waitOutput(args);
+          return await this.#processes.wait(args);
+        case "supervisorStatus":
+          return this.status();
         case "cancel":
           return this.#processes.cancel(args);
         case "summariesForTask":

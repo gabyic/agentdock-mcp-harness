@@ -2,13 +2,15 @@
 Description=AgentDock MCP native Streamable HTTP
 Documentation=https://github.com/gabyic/agentdock-mcp-harness
 Wants=network-online.target
-After=network-online.target
+Requires=agentdock-supervisor.service
+After=network-online.target agentdock-supervisor.service
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
 [Service]
 Type=simple
 Environment=AGENTDOCK_TRANSPORT=http
+Environment=AGENTDOCK_SUPERVISOR_MODE=client
 EnvironmentFile=-%h/.config/agentdock/service.env
 ExecStart=%h/.local/bin/agentdock-mcp
 ExecStartPost=%h/.local/bin/agentdock health --wait-ms 10000 --timeout-ms 1000

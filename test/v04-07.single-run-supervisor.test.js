@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -20,7 +20,7 @@ async function makeRepo(root) {
   return repo;
 }
 
-function runtime(root, stateDir, mode = "auto") {
+function runtime(root, stateDir, mode = "auto", socketPath) {
   const { config } = loadAgentDockConfig({
     homeDir: root,
     configPath: null,
@@ -28,9 +28,21 @@ function runtime(root, stateDir, mode = "auto") {
       AGENTDOCK_STATE_DIR: stateDir,
       AGENTDOCK_STATE_BACKEND: "sqlite",
       AGENTDOCK_SUPERVISOR_MODE: mode,
+      ...(socketPath ? { AGENTDOCK_SUPERVISOR_SOCKET: socketPath } : {}),
     },
   });
   return createAgentDockRuntime({ config });
+}
+
+async function waitForPath(target) {
+  for (let i = 0; i < 200; i += 1) {
+    try {
+      await access(target);
+      return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("path did not appear: " + target);
 }
 
 async function waitTerminal(runtime, taskId, processId) {
@@ -199,4 +211,75 @@ test("v0.4 single supervisor: explicit second owner fails closed", async (t) => 
     () => runtime(root, stateDir, "owner"),
     (error) => error?.code === "SUPERVISOR_ALREADY_RUNNING",
   );
+});
+
+test("v0.4 single supervisor: separate Linux processes share Run status, output, and cancel over UDS", async (t) => {
+  // Unix-domain socket paths are limited to roughly 104 bytes on macOS.
+  const root = await mkdtemp("/tmp/agentdock-ipc-");
+  const stateDir = path.join(root, "state");
+  const socketPath = path.join(stateDir, "supervisor.sock");
+  const repo = await makeRepo(root);
+  const setup = runtime(root, stateDir, "auto");
+  const task = await setup.taskService.create({ repoPath: repo });
+  await close(setup);
+
+  const daemonEnv = { ...process.env };
+  delete daemonEnv.AGENTDOCK_CONFIG;
+  const daemon = spawn(process.execPath, [
+    new URL("../src/supervisor.js", import.meta.url).pathname,
+  ], {
+    env: {
+      ...daemonEnv,
+      HOME: root,
+      AGENTDOCK_STATE_DIR: stateDir,
+      AGENTDOCK_STATE_BACKEND: "sqlite",
+      AGENTDOCK_SUPERVISOR_SOCKET: socketPath,
+    },
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+
+  let client;
+  t.after(async () => {
+    try {
+      if (client && client.taskService.get(task.task_id).status === "ACTIVE") {
+        client.taskService.cancel(task.task_id);
+      }
+      await client?.taskService.cleanup(task.task_id).catch(() => {});
+    } catch {}
+    await close(client).catch(() => {});
+    try { daemon.kill("SIGTERM"); } catch {}
+    await new Promise((resolve) => daemon.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await waitForPath(socketPath);
+  client = runtime(root, stateDir, "client", socketPath);
+  assert.equal(client.supervisorMode, "client");
+
+  const started = await client.processService.start({
+    taskId: task.task_id,
+    shell: "printf ipc-started; sleep 10",
+  });
+  assert.equal(started.status, "RUNNING");
+
+  let output;
+  for (let i = 0; i < 100; i += 1) {
+    output = await client.processService.output({
+      taskId: task.task_id,
+      processId: started.process_id,
+      cursor: 0,
+    });
+    if (output.stdout_chunk.includes("ipc-started")) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.match(output.stdout_chunk, /ipc-started/);
+
+  const cancelled = await client.processService.cancel({
+    taskId: task.task_id,
+    processId: started.process_id,
+  });
+  assert.equal(cancelled.cancel_requested, true);
+  const terminal = await waitTerminal(client, task.task_id, started.process_id);
+  assert.equal(terminal.status, "CANCELLED");
+  assert.notEqual(daemon.pid, process.pid);
 });

@@ -134,6 +134,9 @@ rollback_install() {
   if [[ -n "${cli_launcher_tmp:-}" ]]; then
     rm -f -- "${cli_launcher_tmp}" 2>/dev/null || true
   fi
+  if [[ -n "${supervisor_launcher_tmp:-}" ]]; then
+    rm -f -- "${supervisor_launcher_tmp}" 2>/dev/null || true
+  fi
 }
 trap rollback_install ERR
 
@@ -203,12 +206,16 @@ write_launcher() {
 
 mcp_launcher="${BIN_DIR}/agentdock-mcp"
 cli_launcher="${BIN_DIR}/agentdock"
+supervisor_launcher="${BIN_DIR}/agentdock-supervisor"
 mcp_launcher_tmp="${mcp_launcher}.new.$$"
 cli_launcher_tmp="${cli_launcher}.new.$$"
+supervisor_launcher_tmp="${supervisor_launcher}.new.$$"
 write_launcher "${mcp_launcher_tmp}" "src/index.js"
 write_launcher "${cli_launcher_tmp}" "src/cli.js"
+write_launcher "${supervisor_launcher_tmp}" "src/supervisor.js"
 mv "${mcp_launcher_tmp}" "${mcp_launcher}"
 mv "${cli_launcher_tmp}" "${cli_launcher}"
+mv "${supervisor_launcher_tmp}" "${supervisor_launcher}"
 
 rm -rf -- "${backup}"
 SWAPPED=0
@@ -222,6 +229,7 @@ else
 fi
 echo "MCP launcher: ${mcp_launcher}"
 echo "CLI launcher: ${cli_launcher}"
+echo "Supervisor:   ${supervisor_launcher}"
 echo "State:        ${STATE_DIR}"
 
 case ":${PATH}:" in

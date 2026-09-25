@@ -83,17 +83,19 @@ Install the shipped user service:
 
 ```bash
 mkdir -p ~/.config/systemd/user
+cp ~/.local/share/agentdock-mcp-harness/deploy/systemd/agentdock-supervisor.service \
+  ~/.config/systemd/user/agentdock-supervisor.service
 cp ~/.local/share/agentdock-mcp-harness/deploy/systemd/agentdock-http.service \
   ~/.config/systemd/user/agentdock-http.service
 
 systemctl --user daemon-reload
-systemctl --user enable --now agentdock-http.service
+systemctl --user enable --now agentdock-supervisor.service agentdock-http.service
 ```
 
 Verify it:
 
 ```bash
-systemctl --user status agentdock-http.service
+systemctl --user status agentdock-supervisor.service agentdock-http.service
 agentdock health
 ```
 

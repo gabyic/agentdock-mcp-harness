@@ -27,7 +27,7 @@ export class SupervisorProcessClient {
   }
 
   status({ taskId, processId }) {
-    return this.#supervisor.processStatus({ taskId, processId });
+    return this.#supervisor.request("status", { taskId, processId });
   }
 
   output(args) {
@@ -35,6 +35,10 @@ export class SupervisorProcessClient {
   }
 
   waitOutput(args) {
+    return this.#supervisor.request("waitOutput", args);
+  }
+
+  wait(args) {
     return this.#supervisor.request("waitOutput", args);
   }
 

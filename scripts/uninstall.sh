@@ -149,6 +149,7 @@ fi
 
 remove_managed_launcher "${BIN_DIR}/agentdock"
 remove_managed_launcher "${BIN_DIR}/agentdock-mcp"
+remove_managed_launcher "${BIN_DIR}/agentdock-supervisor"
 
 if [[ "${REMOVE_STATE}" -eq 1 && -e "${STATE_DIR}" ]]; then
   rm -rf -- "${STATE_DIR}"

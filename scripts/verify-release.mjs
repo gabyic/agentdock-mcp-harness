@@ -99,6 +99,9 @@ if (pkg.bin?.agentdock !== "src/cli.js") {
 if (pkg.bin?.["agentdock-mcp"] !== "src/index.js") {
   fail("agentdock-mcp bin metadata is missing or changed.");
 }
+if (pkg.bin?.["agentdock-supervisor"] !== "src/supervisor.js") {
+  fail("agentdock-supervisor bin metadata is missing or changed.");
+}
 
 for (const relative of [
   "src/cli.js",
