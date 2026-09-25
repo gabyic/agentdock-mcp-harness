@@ -455,8 +455,9 @@ test("Ticket 07: host access and structured audit preserve live fidelity and red
   assert.equal(serializedAudit.includes(outputSecret), false);
   assert.match(serializedAudit, /\[REDACTED\]/);
 
-  // Restart AgentDock. Persisted process output is bounded while retaining a
-  // diagnostic tail and explicitly reporting truncation.
+  // Restart AgentDock. Persisted process output is bounded, redacted, and
+  // explicitly reports truncation. Live fidelity was verified above before
+  // the first runtime closed.
   await first.client.close();
   const second = await openClient(stateDir, "second");
   opened.push(second);
@@ -500,7 +501,8 @@ test("Ticket 07: host access and structured audit preserve live fidelity and red
   }
   assert.ok(Buffer.byteLength(boundedText, "utf8") <= 65536);
   assert.ok(boundedPages > 1);
-  assert.match(boundedText, /:END7 TOKEN=LIVE_OUTPUT_SECRET_7$/);
+  assert.equal(boundedText.includes(outputSecret), false);
+  assert.match(boundedText, /:END7 TOKEN=\[REDACTED\]$/);
 
   const auditAfterRestart = dataFrom(
     await second.client.callTool({

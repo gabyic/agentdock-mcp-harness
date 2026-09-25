@@ -231,12 +231,13 @@ AgentDock Core
 ### Workspace Task lifecycle
 
 - `task.create`
+- `task.list`
 - `task.resume`
 - `task.finish`
 - `task.cancel`
 - `task.cleanup`
 
-Write-capable Workspace Tasks are Git-native and get an isolated worktree based on the source repository's current `HEAD`. Dirty source repositories are allowed; their uncommitted changes are not copied into the Task. `task.resume` returns a bounded recent-process summary plus active processes and a `recommended_next_action` instead of replaying the entire process history.
+Write-capable Workspace Tasks are Git-native and get an isolated worktree based on the source repository's current `HEAD`. Dirty source repositories are allowed; their uncommitted changes are not copied into the Task. `task.resume` returns a bounded recent-process summary plus active processes and a `recommended_next_action` instead of replaying the entire process history. `task.list` is read-only and exposes stale-by-last-activity status, blockers, worktree presence/size, active Runs, and aggregate state-directory/worktree usage without deleting anything.
 
 ### Files
 
@@ -266,7 +267,17 @@ The lower-level compatibility/debug surface remains available:
 - `process.output`
 - `process.cancel`
 
-Process output is paged. New live output is retained in a bounded in-memory window, persisted diagnostic output keeps a bounded tail, and no normal output call is allowed to replay an unbounded command transcript.
+Process output is paged. New live output is retained in a bounded in-memory window, persisted diagnostic output keeps a bounded tail, and no normal output call is allowed to replay an unbounded command transcript. Live output remains faithful for debugging; persisted command/env/stdout/stderr diagnostic state is best-effort redacted before durable storage.
+
+### Durable verification Plans
+
+Already-decided deterministic verification chains can continue after the initiating ChatGPT/MCP response returns:
+
+- `plan.start`
+- `plan.get`
+- `plan.cancel`
+
+The minimal Plan Runner is idempotent and executes ordered shell/argv steps in the Task worktree. Passing Plans stop at `READY_TO_COMMIT`; failed/interrupted steps stop at `AWAITING_ASSISTANT`. It does not invoke a hidden LLM or automatically commit/finish the Task.
 
 ### Git
 

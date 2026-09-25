@@ -11,23 +11,31 @@ import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import { AgentDockError } from "./errors.js";
-import { redactEnv } from "./redaction.js";
+import {
+  redactArgv,
+  redactEnv,
+  redactString,
+  sensitiveValuesFromEnv,
+} from "./redaction.js";
 import {
   DEFAULT_PERSISTED_PROCESS_OUTPUT_BYTES,
   DEFAULT_STATE_RELATIVE_PATH,
 } from "./config.js";
 
-const SQLITE_SCHEMA_VERSION = 1;
+const SQLITE_SCHEMA_VERSION = 2;
 const DOCUMENT_PART_PATTERN = /^[A-Za-z0-9._-]+$/;
 
-function persistedOutput(record, maxPersistedOutputBytes) {
+function persistedOutput(record, maxPersistedOutputBytes, sensitiveValues) {
   const chunks = record.output ?? [];
   let bytes = 0;
+  let truncated =
+    Boolean(record.live_output_truncated) ||
+    (record.output_floor_cursor ?? 0) > 0;
   const kept = [];
 
   for (let index = chunks.length - 1; index >= 0; index -= 1) {
     const chunk = chunks[index];
-    const text = String(chunk.text ?? "");
+    const text = redactString(String(chunk.text ?? ""), sensitiveValues);
     const size = Buffer.byteLength(text, "utf8");
 
     if (bytes + size <= maxPersistedOutputBytes) {
@@ -35,11 +43,13 @@ function persistedOutput(record, maxPersistedOutputBytes) {
         cursor: chunk.cursor,
         stream: chunk.stream,
         text,
+        partial: Boolean(chunk.partial),
       });
       bytes += size;
       continue;
     }
 
+    truncated = true;
     const remaining = maxPersistedOutputBytes - bytes;
     if (remaining > 0) {
       const buffer = Buffer.from(text, "utf8");
@@ -50,6 +60,7 @@ function persistedOutput(record, maxPersistedOutputBytes) {
         cursor: chunk.cursor,
         stream: chunk.stream,
         text: tail,
+        partial: true,
       });
       bytes += Buffer.byteLength(tail, "utf8");
     }
@@ -67,9 +78,45 @@ function persistedOutput(record, maxPersistedOutputBytes) {
     output_floor_cursor: floorCursor,
     next_output_cursor: record.next_output_cursor ?? chunks.length,
     persisted_output_bytes: bytes,
-    persisted_output_truncated:
-      floorCursor > 0 || bytes < (record.output_total_bytes ?? bytes),
+    persisted_output_truncated: truncated,
     output_total_bytes: record.output_total_bytes ?? bytes,
+  };
+}
+
+function durableProcessSnapshot(record, maxPersistedOutputBytes) {
+  const sensitiveValues = sensitiveValuesFromEnv(record.env);
+  const outputState = persistedOutput(
+    record,
+    maxPersistedOutputBytes,
+    sensitiveValues,
+  );
+
+  return {
+    process_id: record.process_id,
+    task_id: record.task_id,
+    pid: record.pid,
+    status: record.status,
+    mode: record.mode,
+    argv: redactArgv(record.argv, sensitiveValues),
+    shell:
+      record.shell == null
+        ? record.shell
+        : redactString(record.shell, sensitiveValues),
+    cwd: redactString(record.cwd ?? "", sensitiveValues),
+    env: redactEnv(record.env),
+    started_at: record.started_at,
+    ended_at: record.ended_at,
+    exit_code: record.exit_code,
+    signal: record.signal,
+    error:
+      record.error == null
+        ? record.error
+        : redactString(record.error, sensitiveValues),
+    cancel_requested: record.cancel_requested,
+    owner_instance_id: record.owner_instance_id,
+    owner_pid: record.owner_pid,
+    idempotency_operation_id: record.idempotency_operation_id,
+    ...outputState,
   };
 }
 
@@ -210,9 +257,53 @@ export class StateStore {
       );
     }
     if (version < SQLITE_SCHEMA_VERSION) {
-      this.#db.exec("PRAGMA user_version=" + SQLITE_SCHEMA_VERSION);
+      this.#migrateSqlite(version);
     }
     chmodSync(this.#dbPath, 0o600);
+  }
+
+  #migrateSqlite(fromVersion) {
+    if (fromVersion >= 2) return;
+
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      const rows = this.#db
+        .prepare(
+          "SELECT id, value_json FROM state_documents WHERE kind = 'process'",
+        )
+        .all();
+      const update = this.#db.prepare(
+        [
+          "UPDATE state_documents",
+          "SET value_json = ?, revision = revision + 1, updated_at = ?",
+          "WHERE kind = 'process' AND id = ?",
+        ].join("\n"),
+      );
+
+      for (const row of rows) {
+        const record = JSON.parse(row.value_json);
+        record.process_id ??= row.id;
+        const sanitized = durableProcessSnapshot(
+          record,
+          this.#maxPersistedOutputBytes,
+        );
+        update.run(
+          JSON.stringify(sanitized),
+          new Date().toISOString(),
+          row.id,
+        );
+      }
+
+      this.#db.exec("PRAGMA user_version=2");
+      this.#db.exec("COMMIT");
+    } catch (error) {
+      try {
+        this.#db.exec("ROLLBACK");
+      } catch {
+        // Preserve the original migration error.
+      }
+      throw error;
+    }
   }
 
   #readJson(filePath) {
@@ -417,10 +508,20 @@ export class StateStore {
       const filePath = path.join(directory, entry.name);
       const value = this.#readJson(filePath);
       if (value === null) continue;
+      const importedValue =
+        kind === "process"
+          ? durableProcessSnapshot(
+              {
+                ...value,
+                process_id: value.process_id ?? id,
+              },
+              this.#maxPersistedOutputBytes,
+            )
+          : value;
       const result = insert.run(
         kind,
         id,
-        JSON.stringify(value),
+        JSON.stringify(importedValue),
         new Date().toISOString(),
       );
       if (Number(result.changes ?? 0) > 0) imported += 1;
@@ -541,6 +642,42 @@ export class StateStore {
       .filter((entry) => entry.value !== null);
   }
 
+  listProcessMetadata() {
+    this.#assertOpen();
+    if (this.#backend === "sqlite") {
+      return this.#db
+        .prepare(
+          [
+            "SELECT",
+            "  id,",
+            "  json_extract(value_json, '$.task_id') AS task_id,",
+            "  json_extract(value_json, '$.status') AS status,",
+            "  json_extract(value_json, '$.started_at') AS started_at,",
+            "  json_extract(value_json, '$.ended_at') AS ended_at",
+            "FROM state_documents",
+            "WHERE kind = 'process'",
+            "ORDER BY id",
+          ].join("\n"),
+        )
+        .all()
+        .map((row) => ({
+          process_id: row.id,
+          task_id: row.task_id,
+          status: row.status,
+          started_at: row.started_at,
+          ended_at: row.ended_at,
+        }));
+    }
+
+    return this.listDocuments("process").map((document) => ({
+      process_id: document.id,
+      task_id: document.value?.task_id ?? null,
+      status: document.value?.status ?? null,
+      started_at: document.value?.started_at ?? null,
+      ended_at: document.value?.ended_at ?? null,
+    }));
+  }
+
   taskPath(taskId) {
     return path.join(this.#tasksDir, taskId + ".json");
   }
@@ -594,31 +731,10 @@ export class StateStore {
   }
 
   saveProcess(record) {
-    const outputState = persistedOutput(
+    const serializable = durableProcessSnapshot(
       record,
       this.#maxPersistedOutputBytes,
     );
-    const serializable = {
-      process_id: record.process_id,
-      task_id: record.task_id,
-      pid: record.pid,
-      status: record.status,
-      mode: record.mode,
-      argv: record.argv,
-      shell: record.shell,
-      cwd: record.cwd,
-      env: redactEnv(record.env),
-      started_at: record.started_at,
-      ended_at: record.ended_at,
-      exit_code: record.exit_code,
-      signal: record.signal,
-      error: record.error,
-      cancel_requested: record.cancel_requested,
-      owner_instance_id: record.owner_instance_id,
-      owner_pid: record.owner_pid,
-      idempotency_operation_id: record.idempotency_operation_id,
-      ...outputState,
-    };
 
     if (this.#backend === "sqlite") {
       this.saveDocument("process", record.process_id, serializable);

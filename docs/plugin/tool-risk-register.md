@@ -1,11 +1,12 @@
 # Tool risk register
 
-All 31 tools must expose explicit readOnlyHint, destructiveHint, and openWorldHint values.
+All 38 tools must expose explicit readOnlyHint, destructiveHint, and openWorldHint values.
 
 | Tool | R | D | O | Justification |
 | --- | --- | --- | --- | --- |
 | repo.inspect | T | F | F | local Git read |
 | task.create | F | F | F | creates isolated local worktree |
+| task.list | T | F | F | reads durable Task/hygiene/storage status without cleanup |
 | task.resume | T | F | F | reads durable task |
 | task.finish | F | T | F | irreversibly finalizes task |
 | task.cancel | F | T | F | terminates task lifecycle |
@@ -23,6 +24,12 @@ All 31 tools must expose explicit readOnlyHint, destructiveHint, and openWorldHi
 | process.status | T | F | F | reads process state |
 | process.output | T | F | F | reads stdout/stderr |
 | process.cancel | F | T | F | terminates process group |
+| run.start | F | T | T | preferred async command execution surface |
+| run.get | T | F | F | reads bounded durable/live Run status and output |
+| run.cancel | F | T | F | requests cancellation of a locally owned Run |
+| plan.start | F | T | T | starts durable deterministic command steps |
+| plan.get | T | F | F | reads durable Plan progress and blockers |
+| plan.cancel | F | T | F | requests durable Plan cancellation |
 | skill.list | T | F | F | local skill metadata |
 | skill.search | T | F | F | local skill search |
 | skill.read | T | F | F | local skill read |

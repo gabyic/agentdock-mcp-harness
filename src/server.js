@@ -13,6 +13,7 @@ import { PolicyService } from "./policy-service.js";
 import { ProcessService } from "./process-service.js";
 import { SkillService } from "./skill-service.js";
 import { StateStore } from "./state-store.js";
+import { TaskHygieneService } from "./task-hygiene-service.js";
 import { TaskService } from "./task-service.js";
 import { WorkflowService } from "./workflow-service.js";
 import { AGENTDOCK_VERSION } from "./version.js";
@@ -61,6 +62,7 @@ function safe(handler) {
 export const TOOL_RISK_PROFILES = Object.freeze({
   "repo.inspect": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "task.create": { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  "task.list": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "task.resume": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "task.finish": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   "task.cancel": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
@@ -182,6 +184,10 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     processService,
     auditService,
   });
+  const taskHygieneService = new TaskHygieneService({
+    taskService,
+    stateStore,
+  });
   const skillService = new SkillService({
     stateStore,
     autoRoutingEnabled: resolvedConfig.skills.matt_auto_routing,
@@ -204,6 +210,7 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     idempotencyService,
     processService,
     planService,
+    taskHygieneService,
     skillService,
     workflowService,
     config: resolvedConfig,
@@ -222,6 +229,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     fileEditService,
     processService,
     planService,
+    taskHygieneService,
     skillService,
     workflowService,
   } = services;
@@ -259,6 +267,23 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       });
       return toolResult(task);
     }),
+  );
+
+  registerTool(
+    server,
+    "task.list",
+    "List durable Tasks and hygiene/storage status. This is observational only: it never cleans, deletes, resumes, or mutates a Task.",
+    {
+      stale_after_seconds: z.number().int().min(60).max(31536000).optional(),
+      include_finalized: z.boolean().optional(),
+    },
+    safe(async ({ stale_after_seconds, include_finalized }) =>
+      toolResult(
+        await taskHygieneService.list({
+          staleAfterSeconds: stale_after_seconds ?? 3600,
+          includeFinalized: include_finalized ?? true,
+        }),
+      )),
   );
 
   registerTool(

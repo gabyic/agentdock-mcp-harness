@@ -297,6 +297,24 @@ A clean Task with no new commit cannot silently become completed. Conversely, `N
 
 Historical completed Tasks that contain a commit newer than their base HEAD but predate retention metadata are also treated conservatively: cleanup refuses until their result is reconciled instead of risking deletion of the only remaining commit object.
 
+## Secure durable output and Task hygiene
+
+Live Run/process output remains faithful for the currently connected runtime. Before Process state is persisted, AgentDock applies best-effort redaction to command arguments/shell, environment, stderr/stdout diagnostic chunks, cwd, and error text. Sensitive environment values are also treated as redaction canaries inside persisted command/output text. The durable diagnostic tail remains bounded by the existing Process output retention limit.
+
+SQLite schema v2 rewrites existing authoritative Process documents through the same redaction seam and sanitizes Process records during legacy JSON import. The legacy JSON rollback files themselves are left byte-for-byte unchanged. Historical redaction is necessarily best-effort: an old opaque value that was persisted without a recognizable secret key/prefix and whose original secret value is no longer available cannot be reconstructed and identified reliably.
+
+`task.list` is a read-only hygiene view. It reports:
+
+- lifecycle state and completion outcome;
+- last meaningful activity time/age using Task, Process, and Plan activity;
+- active Run ids and current Plan status;
+- pending approvals/blockers;
+- worktree presence and approximate byte usage;
+- stale / needs-attention status;
+- aggregate AgentDock state/worktree usage and orphan-worktree counts.
+
+A stale ACTIVE Task is only surfaced as needing attention. Ticket 05 performs **no automatic cleanup, cancellation, GC, or age-based deletion**.
+
 ## Test contract
 
 v0.2-06 black-box coverage verifies:

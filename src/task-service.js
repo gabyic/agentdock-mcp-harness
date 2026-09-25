@@ -49,6 +49,18 @@ export class TaskService {
     return this.#assertExists(this.#store.loadTask(taskId), taskId);
   }
 
+  list() {
+    return this.#store
+      .listDocuments("task")
+      .map((document) => document.value)
+      .filter(Boolean)
+      .sort((left, right) =>
+        String(right.created_at ?? "").localeCompare(
+          String(left.created_at ?? ""),
+        ),
+      );
+  }
+
   mutate(taskId, mutator) {
     this.#validateTaskId(taskId);
     let result;
