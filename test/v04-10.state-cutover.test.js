@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
   cp,
   mkdir,
@@ -12,18 +11,22 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   assertNoOpenStateHandles,
   findOpenStateHandles,
+  runStateCutover,
 } from "../scripts/state-cutover.mjs";
 import {
   LEGACY_IMPORT_MARKER_ID,
   StateStore,
 } from "../src/state-store.js";
 
-const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+async function isolatedProcRoot(root) {
+  const procRoot = path.join(root, "proc-fixture");
+  await mkdir(procRoot, { recursive: true });
+  return procRoot;
+}
 
 test("v0.4 state cutover creates a rollback backup and cross-checks every legacy identity", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agentdock-v04-cutover-"));
@@ -45,13 +48,13 @@ test("v0.4 state cutover creates a rollback backup and cross-checks every legacy
   }
   t.after(async () => rm(root, { recursive: true, force: true }));
 
-  const stdout = execFileSync(process.execPath, [
-    "scripts/state-cutover.mjs",
-    "--state-dir", stateDir,
-    "--backup-dir", backupDir,
-    "--maintenance-confirmed",
-  ], { cwd: projectRoot, encoding: "utf8" });
-  const result = JSON.parse(stdout);
+  const procRoot = await isolatedProcRoot(root);
+  const result = await runStateCutover({
+    stateDir,
+    backupDir,
+    maintenanceConfirmed: true,
+    existingSqliteAuthoritative: false,
+  }, { procRoot });
   assert.equal(result.status, "PASS");
   assert.equal(result.cutover_mode, "INITIAL_JSON_IMPORT");
   assert.equal(result.report.integrity_check, "ok");
@@ -82,12 +85,12 @@ test("v0.4 state cutover creates a rollback backup and cross-checks every legacy
   sqlite.close();
 
   const secondBackup = path.join(root, "backups", "existing-sqlite");
-  const existing = JSON.parse(execFileSync(process.execPath, [
-    "scripts/state-cutover.mjs",
-    "--state-dir", stateDir,
-    "--backup-dir", secondBackup,
-    "--maintenance-confirmed",
-  ], { cwd: projectRoot, encoding: "utf8" }));
+  const existing = await runStateCutover({
+    stateDir,
+    backupDir: secondBackup,
+    maintenanceConfirmed: true,
+    existingSqliteAuthoritative: false,
+  }, { procRoot });
   assert.equal(existing.status, "PASS");
   assert.equal(existing.cutover_mode, "EXISTING_SQLITE_BACKUP");
   assert.equal(existing.report.identity_complete, true);
@@ -112,17 +115,12 @@ test("v0.4 state cutover creates a rollback backup and cross-checks every legacy
   const missing = new StateStore({ stateDir, backend: "sqlite" });
   missing.deleteDocument("task", taskId);
   missing.close();
-  let failed;
-  try {
-    execFileSync(process.execPath, [
-      "scripts/state-cutover.mjs",
-      "--state-dir", stateDir,
-      "--backup-dir", path.join(root, "backups", "missing-identity"),
-      "--maintenance-confirmed",
-    ], { cwd: projectRoot, encoding: "utf8" });
-  } catch (error) {
-    failed = JSON.parse(error.stdout);
-  }
+  const failed = await runStateCutover({
+    stateDir,
+    backupDir: path.join(root, "backups", "missing-identity"),
+    maintenanceConfirmed: true,
+    existingSqliteAuthoritative: false,
+  }, { procRoot });
   assert.equal(failed.status, "FAIL");
   assert.equal(failed.report.identity_complete, false);
   const verifyMissing = new StateStore({ stateDir, backend: "sqlite" });
@@ -151,17 +149,20 @@ test("v0.4 state cutover refuses a live writer lease before creating backup", as
   }));
   t.after(async () => rm(root, { recursive: true, force: true }));
 
+  const procRoot = await isolatedProcRoot(root);
   let failure;
-  try {
-    execFileSync(process.execPath, [
-      "scripts/state-cutover.mjs",
-      "--state-dir", stateDir,
-      "--backup-dir", path.join(root, "backup"),
-      "--maintenance-confirmed",
-    ], { cwd: projectRoot, encoding: "utf8" });
-  } catch (error) {
-    failure = JSON.parse(String(error.stderr).trim().split("\n").at(-1));
-  }
+  await assert.rejects(
+    runStateCutover({
+      stateDir,
+      backupDir: path.join(root, "backup"),
+      maintenanceConfirmed: true,
+      existingSqliteAuthoritative: false,
+    }, { procRoot }),
+    (error) => {
+      failure = error;
+      return true;
+    },
+  );
   assert.equal(failure.code, "STATE_WRITER_ACTIVE");
   assert.equal(failure.details.live_runtime_leases[0].heartbeat_stale, true);
   await assert.rejects(readFile(path.join(root, "backup", "runtime-leases", "runtime-live.json")), { code: "ENOENT" });
@@ -180,28 +181,30 @@ test("v0.4 state cutover requires an explicit authority acknowledgement for an u
   sqlite.close();
   t.after(async () => rm(root, { recursive: true, force: true }));
 
+  const procRoot = await isolatedProcRoot(root);
   const refusedBackup = path.join(root, "backups", "refused");
   let refusal;
-  try {
-    execFileSync(process.execPath, [
-      "scripts/state-cutover.mjs",
-      "--state-dir", stateDir,
-      "--backup-dir", refusedBackup,
-      "--maintenance-confirmed",
-    ], { cwd: projectRoot, encoding: "utf8" });
-  } catch (error) {
-    refusal = JSON.parse(String(error.stderr).trim().split("\n").at(-1));
-  }
+  await assert.rejects(
+    runStateCutover({
+      stateDir,
+      backupDir: refusedBackup,
+      maintenanceConfirmed: true,
+      existingSqliteAuthoritative: false,
+    }, { procRoot }),
+    (error) => {
+      refusal = error;
+      return true;
+    },
+  );
   assert.equal(refusal.code, "EXISTING_SQLITE_AUTHORITY_UNCONFIRMED");
   await assert.rejects(readFile(path.join(refusedBackup, "agentdock.db")), { code: "ENOENT" });
 
-  const accepted = JSON.parse(execFileSync(process.execPath, [
-    "scripts/state-cutover.mjs",
-    "--state-dir", stateDir,
-    "--backup-dir", path.join(root, "backups", "accepted"),
-    "--maintenance-confirmed",
-    "--existing-sqlite-authoritative",
-  ], { cwd: projectRoot, encoding: "utf8" }));
+  const accepted = await runStateCutover({
+    stateDir,
+    backupDir: path.join(root, "backups", "accepted"),
+    maintenanceConfirmed: true,
+    existingSqliteAuthoritative: true,
+  }, { procRoot });
   assert.equal(accepted.status, "PASS");
   assert.equal(accepted.cutover_mode, "EXISTING_SQLITE_BACKUP");
   assert.equal(accepted.existing_sqlite_authoritative_confirmed, true);
@@ -217,17 +220,20 @@ test("v0.4 state cutover rejects unsupported legacy JSON filenames without marki
   await writeFile(path.join(stateDir, "tasks", "bad task id.json"), "{}\n");
   t.after(async () => rm(root, { recursive: true, force: true }));
 
+  const procRoot = await isolatedProcRoot(root);
   let failure;
-  try {
-    execFileSync(process.execPath, [
-      "scripts/state-cutover.mjs",
-      "--state-dir", stateDir,
-      "--backup-dir", path.join(root, "backup"),
-      "--maintenance-confirmed",
-    ], { cwd: projectRoot, encoding: "utf8" });
-  } catch (error) {
-    failure = JSON.parse(String(error.stderr).trim().split("\n").at(-1));
-  }
+  await assert.rejects(
+    runStateCutover({
+      stateDir,
+      backupDir: path.join(root, "backup"),
+      maintenanceConfirmed: true,
+      existingSqliteAuthoritative: false,
+    }, { procRoot }),
+    (error) => {
+      failure = error;
+      return true;
+    },
+  );
   assert.equal(failure.code, "INVALID_LEGACY_STATE_FILENAME");
   const sqlite = new StateStore({ stateDir, backend: "sqlite", importLegacy: false });
   assert.equal(sqlite.loadDocument("system", LEGACY_IMPORT_MARKER_ID), null);

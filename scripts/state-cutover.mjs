@@ -224,6 +224,7 @@ export async function findOpenStateHandles({
 
   return {
     handles,
+    scan_uid: uid ?? null,
     incomplete_pids: [...new Set(incompletePids)].sort((left, right) => left - right),
   };
 }
@@ -247,8 +248,13 @@ export async function assertNoOpenStateHandles(options) {
   return result;
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
+export async function runStateCutover(options, { procRoot = "/proc" } = {}) {
+  if (!options?.stateDir || !options?.backupDir) {
+    throw new Error("stateDir and backupDir are required.");
+  }
+  if (!options.maintenanceConfirmed) {
+    throw new Error("Refusing cutover without maintenance confirmation.");
+  }
   if (inside(options.stateDir, options.backupDir)) {
     throw new Error("Backup directory must be outside the state directory.");
   }
@@ -260,7 +266,11 @@ async function main() {
 
   await assertNoLiveRuntimeLease(options.stateDir);
   if (process.platform === "linux") {
-    await assertNoOpenStateHandles({ stateDir: options.stateDir });
+    await assertNoOpenStateHandles({
+      stateDir: options.stateDir,
+      procRoot,
+      uid: stateInfo.uid,
+    });
   }
 
   const databasePath = path.join(options.stateDir, "agentdock.db");
@@ -298,7 +308,11 @@ async function main() {
   });
   await assertNoLiveRuntimeLease(options.stateDir);
   if (process.platform === "linux") {
-    await assertNoOpenStateHandles({ stateDir: options.stateDir });
+    await assertNoOpenStateHandles({
+      stateDir: options.stateDir,
+      procRoot,
+      uid: stateInfo.uid,
+    });
   }
 
   const store = new StateStore({
@@ -344,8 +358,13 @@ async function main() {
         : false,
     report,
   };
+  return output;
+}
+
+async function main() {
+  const output = await runStateCutover(parseArgs(process.argv.slice(2)));
   process.stdout.write(JSON.stringify(output, null, 2) + "\n");
-  if (!accepted) process.exitCode = 1;
+  if (output.status !== "PASS") process.exitCode = 1;
 }
 
 if (

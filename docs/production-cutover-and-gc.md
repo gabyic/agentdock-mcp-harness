@@ -28,10 +28,10 @@ sudo systemctl is-active agentdock-mcp.service agentdock-http.service agentdock-
 
 Do not continue merely because the three main PIDs exited. Confirm the service cgroups are empty and that no same-user process still has `agentdock.db`, its WAL files, or another path below the state directory open. The cutover command performs a second Linux `/proc/<pid>/fd` scan and rejects any live PID recorded in a runtime lease even when that lease heartbeat is stale. The lease check alone is not sufficient because HTTP and MCP client runtimes are also SQLite writers.
 
-Choose a new backup path outside the state directory. The backup command refuses an existing destination, a destination physically nested in state, a live Supervisor lease, or an open same-user state handle:
+Choose a new backup path outside the state directory. The backup command refuses an existing destination, a destination physically nested in state, a live Supervisor lease, or an open state-owner handle. Run it with enough privilege to inspect protected `/proc/<pid>/fd` directories; the scanner targets the state directory owner's UID rather than the invoking UID, so running it as root does not skip the service account:
 
 ```bash
-node scripts/state-cutover.mjs \
+sudo /usr/bin/node scripts/state-cutover.mjs \
   --state-dir /home/ubuntu/agentdock-runtime/state \
   --backup-dir /home/ubuntu/agentdock-backups/pre-ticket10-YYYYMMDDTHHMMSSZ \
   --maintenance-confirmed
@@ -42,7 +42,7 @@ The command copies the complete state tree, including SQLite WAL files and Task 
 An existing SQLite database with no verified cutover marker is ambiguous. After independently confirming that it is the currently authoritative production database, acknowledge that one condition explicitly:
 
 ```bash
-node scripts/state-cutover.mjs \
+sudo /usr/bin/node scripts/state-cutover.mjs \
   --state-dir /home/ubuntu/agentdock-runtime/state \
   --backup-dir /home/ubuntu/agentdock-backups/pre-ticket10-YYYYMMDDTHHMMSSZ \
   --maintenance-confirmed \
