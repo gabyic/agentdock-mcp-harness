@@ -300,6 +300,25 @@ export class StateStore {
     return value;
   }
 
+  deleteDocument(kind, id) {
+    this.#assertOpen();
+    const safeKind = safeDocumentPart(kind, "kind");
+    const safeId = safeDocumentPart(id, "id");
+
+    if (this.#backend === "sqlite") {
+      this.#db
+        .prepare("DELETE FROM state_documents WHERE kind = ? AND id = ?")
+        .run(safeKind, safeId);
+      return;
+    }
+
+    try {
+      unlinkSync(this.#documentPath(safeKind, safeId));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+
   mutateDocument(
     kind,
     id,
@@ -597,6 +616,7 @@ export class StateStore {
       cancel_requested: record.cancel_requested,
       owner_instance_id: record.owner_instance_id,
       owner_pid: record.owner_pid,
+      idempotency_operation_id: record.idempotency_operation_id,
       ...outputState,
     };
 

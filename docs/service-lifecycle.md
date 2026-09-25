@@ -92,6 +92,30 @@ INTERRUPTED = AgentDock actually lost execution ownership.
 REMOTE      = another live AgentDock runtime currently owns execution.
 ```
 
+### Idempotent Run start and transport retries
+
+A remote client may lose the response to a mutating request even though AgentDock already accepted it. Retrying the same command without a durable identity would otherwise create a second Run and repeat side effects.
+
+`run.start` and the compatibility `process.start` therefore accept an optional:
+
+```text
+idempotency_key
+```
+
+For a given Task and start tool:
+
+- the first request binds the key to a request fingerprint and one durable Run;
+- an in-flight or terminal retry with the same key and same request returns that original Run;
+- the binding survives AgentDock runtime restart;
+- the same key with different arguments fails closed with `IDEMPOTENCY_KEY_REUSED`;
+- the raw key is not persisted; AgentDock stores a hashed operation id and request fingerprint.
+
+Callers should generate one stable key per logical mutating action and reuse it only when retrying that exact action.
+
+The built-in retention policy keeps terminal idempotency records for up to **7 days** and caps the operation set at **5,000 records**. Old terminal records are eligible for pruning. Non-terminal records are never discarded merely to make space; if the cap is filled by non-terminal operations, new idempotent starts fail closed rather than silently losing deduplication state.
+
+A narrow claim-to-process persistence window is also fail-closed. If a retry sees the durable operation before the original Run record is visible, AgentDock reports `IDEMPOTENCY_OPERATION_PENDING`; the caller should retry with the same key. It must not create a replacement Run with another key unless the human intentionally wants a second side effect.
+
 ## Health command
 
 For HTTP deployments:

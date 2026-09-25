@@ -7,6 +7,7 @@ import { AuditService } from "./audit-service.js";
 import { FileEditService } from "./file-edit-service.js";
 import { FileQueryService } from "./file-query-service.js";
 import { GitService } from "./git-service.js";
+import { IdempotencyService } from "./idempotency-service.js";
 import { PolicyService } from "./policy-service.js";
 import { ProcessService } from "./process-service.js";
 import { SkillService } from "./skill-service.js";
@@ -163,11 +164,13 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     taskService,
     auditService,
   });
+  const idempotencyService = new IdempotencyService({ stateStore });
   const processService = new ProcessService({
     taskService,
     stateStore,
     approvalService,
     auditService,
+    idempotencyService,
   });
   const skillService = new SkillService({
     stateStore,
@@ -188,6 +191,7 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     approvalService,
     fileQueryService,
     fileEditService,
+    idempotencyService,
     processService,
     skillService,
     workflowService,
@@ -583,8 +587,9 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       shell: z.string().min(1).optional(),
       cwd: z.string().optional(),
       env: z.record(z.string(), z.string()).optional(),
+      idempotency_key: z.string().min(1).max(256).optional(),
     },
-    safe(async ({ task_id, argv, shell, cwd, env }) =>
+    safe(async ({ task_id, argv, shell, cwd, env, idempotency_key }) =>
       toolResult(
         await processService.start({
           taskId: task_id,
@@ -592,6 +597,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
           shell,
           cwd,
           env,
+          idempotencyKey: idempotency_key,
         }),
       )),
   );
@@ -657,14 +663,16 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       shell: z.string().min(1).optional(),
       cwd: z.string().optional(),
       env: z.record(z.string(), z.string()).optional(),
+      idempotency_key: z.string().min(1).max(256).optional(),
     },
-    safe(async ({ task_id, argv, shell, cwd, env }) => {
+    safe(async ({ task_id, argv, shell, cwd, env, idempotency_key }) => {
       const started = await processService.start({
         taskId: task_id,
         argv,
         shell,
         cwd,
         env,
+        idempotencyKey: idempotency_key,
       });
       return toolResult({
         run_id: started.process_id,
@@ -672,6 +680,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
         status: started.status,
         started_at: started.started_at,
         poll_after_ms: 1000,
+        idempotent_replay: Boolean(started.idempotent_replay),
       });
     }),
   );

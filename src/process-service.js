@@ -55,6 +55,7 @@ export class ProcessService {
   #store;
   #approval;
   #audit;
+  #idempotency;
   #processes = new Map();
   #instanceId;
   #instanceStartedAt;
@@ -68,6 +69,7 @@ export class ProcessService {
     stateStore,
     approvalService,
     auditService,
+    idempotencyService,
     instanceId,
     leaseHeartbeatMs = DEFAULT_LEASE_HEARTBEAT_MS,
     leaseStaleMs = DEFAULT_LEASE_STALE_MS,
@@ -77,6 +79,7 @@ export class ProcessService {
     this.#store = stateStore;
     this.#approval = approvalService;
     this.#audit = auditService;
+    this.#idempotency = idempotencyService;
 
     if (!Number.isInteger(leaseHeartbeatMs) || leaseHeartbeatMs < 100) {
       throw new TypeError("leaseHeartbeatMs must be an integer >= 100.");
@@ -161,6 +164,45 @@ export class ProcessService {
     return "ALIVE";
   }
 
+  #syncIdempotency(record, status = record.status) {
+    if (!record.idempotency_operation_id || !this.#idempotency) return null;
+    return this.#idempotency.mark({
+      operationId: record.idempotency_operation_id,
+      runId: record.process_id,
+      status,
+    });
+  }
+
+  async #replayIdempotent(operation, taskId) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const snapshot = this.#store.loadProcess(operation.run_id);
+      if (snapshot) {
+        const record = this.#get(operation.run_id);
+        if (record.task_id !== taskId) {
+          throw new AgentDockError(
+            "PROCESS_TASK_MISMATCH",
+            "Idempotent Run does not belong to this Task.",
+          );
+        }
+        return {
+          ...this.#public(record),
+          idempotent_replay: true,
+        };
+      }
+      await sleep(25);
+    }
+
+    throw new AgentDockError(
+      "IDEMPOTENCY_OPERATION_PENDING",
+      "The original idempotent Run is still being created. Retry with the same idempotency_key.",
+      {
+        operation_id: operation.operation_id,
+        run_id: operation.run_id,
+        status: operation.status,
+      },
+    );
+  }
+
   #persist(record) {
     const persisted = this.#store.saveProcess(record);
     record.persisted_output_truncated =
@@ -177,6 +219,7 @@ export class ProcessService {
     record.remote_owner = false;
     record.remote_owner_stale = false;
     this.#persist(record);
+    this.#syncIdempotency(record, "INTERRUPTED");
     this.#audit?.append(record.task_id, {
       event: "PROCESS_INTERRUPTED",
       process_id: record.process_id,
@@ -433,9 +476,8 @@ export class ProcessService {
     shell,
     cwd = ".",
     env = {},
+    idempotencyKey,
   }) {
-    this.#tasks.assertActive(taskId);
-
     const hasArgv = Array.isArray(argv);
     const hasShell = typeof shell === "string";
 
@@ -458,6 +500,37 @@ export class ProcessService {
       );
     }
 
+    const mode = hasArgv ? "argv" : "shell";
+    const idempotencyRequest = {
+      task_id: taskId,
+      tool: "process.start",
+      mode,
+      argv: hasArgv ? [...argv] : null,
+      shell: hasShell ? shell : null,
+      cwd: cwd ?? ".",
+      env: { ...env },
+    };
+
+    if (idempotencyKey !== undefined) {
+      if (!this.#idempotency) {
+        throw new AgentDockError(
+          "IDEMPOTENCY_UNAVAILABLE",
+          "Durable idempotency is not configured for this runtime.",
+        );
+      }
+      const existing = this.#idempotency.lookup({
+        taskId,
+        tool: "process.start",
+        key: idempotencyKey,
+        request: idempotencyRequest,
+      });
+      if (existing.operation) {
+        return this.#replayIdempotent(existing.operation, taskId);
+      }
+    }
+
+    this.#tasks.assertActive(taskId);
+
     const location = await resolveExistingTaskPath(
       this.#tasks,
       taskId,
@@ -473,17 +546,46 @@ export class ProcessService {
       env,
     });
 
-    const processId = "proc_" + randomUUID();
-    const mode = hasArgv ? "argv" : "shell";
+    let processId = "proc_" + randomUUID();
+    let operationId = null;
+
+    if (idempotencyKey !== undefined) {
+      const claim = this.#idempotency.claim({
+        taskId,
+        tool: "process.start",
+        key: idempotencyKey,
+        request: idempotencyRequest,
+        runId: processId,
+        ownerInstanceId: this.#instanceId,
+      });
+      if (!claim.created) {
+        return this.#replayIdempotent(claim.operation, taskId);
+      }
+      operationId = claim.operationId;
+      processId = claim.operation.run_id;
+    }
+
     const command = hasArgv ? argv[0] : shell;
     const args = hasArgv ? argv.slice(1) : [];
-    const child = spawn(command, args, {
-      cwd: location.resolved,
-      env: { ...process.env, ...env },
-      shell: hasShell,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    let child;
+    try {
+      child = spawn(command, args, {
+        cwd: location.resolved,
+        env: { ...process.env, ...env },
+        shell: hasShell,
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      if (operationId) {
+        this.#idempotency.mark({
+          operationId,
+          runId: processId,
+          status: "FAILED",
+        });
+      }
+      throw error;
+    }
 
     const record = {
       process_id: processId,
@@ -504,6 +606,7 @@ export class ProcessService {
       cancel_requested: false,
       owner_instance_id: this.#instanceId,
       owner_pid: process.pid,
+      idempotency_operation_id: operationId,
       output: [],
       output_floor_cursor: 0,
       next_output_cursor: 0,
@@ -518,6 +621,7 @@ export class ProcessService {
     this.#processes.set(processId, record);
     this.#persist(record);
     this.#tasks.addProcess(taskId, processId);
+    this.#syncIdempotency(record, "RUNNING");
 
     this.#audit?.append(taskId, {
       event: "PROCESS_STARTED",
@@ -531,6 +635,7 @@ export class ProcessService {
       env,
       started_at: record.started_at,
       owner_instance_id: this.#instanceId,
+      idempotency_operation_id: operationId,
     });
 
     const append = (stream, chunk) => {
@@ -560,6 +665,7 @@ export class ProcessService {
       record.child = null;
       record.remote_owner = false;
       this.#persist(record);
+      this.#syncIdempotency(record, "FAILED");
       this.#audit?.append(taskId, {
         event: "PROCESS_FAILED",
         process_id: processId,
@@ -585,6 +691,7 @@ export class ProcessService {
       record.child = null;
       record.remote_owner = false;
       this.#persist(record);
+      this.#syncIdempotency(record, record.status);
       this.#audit?.append(taskId, {
         event: "PROCESS_ENDED",
         process_id: processId,
@@ -598,7 +705,11 @@ export class ProcessService {
       });
     });
 
-    return this.#public(record);
+    const result = this.#public(record);
+    if (idempotencyKey !== undefined) {
+      result.idempotent_replay = false;
+    }
+    return result;
   }
 
   status({ taskId, processId }) {

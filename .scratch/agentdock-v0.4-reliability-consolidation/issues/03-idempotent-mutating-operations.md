@@ -4,11 +4,11 @@
 
 **Blocked by:** 02: Authoritative Task State Cutover
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Run start accepts a durable operation/idempotency key.
-- [ ] Retrying the same key with the same request fingerprint returns the original Run/result.
-- [ ] Retrying the same key with a different request fingerprint is rejected.
-- [ ] In-flight and terminal retries are both deduplicated across runtime restarts.
-- [ ] The reproduced duplicate-side-effect test executes the side effect exactly once.
-- [ ] Idempotency records are transactional and bounded by a documented retention policy.
+- [x] Run start accepts a durable operation/idempotency key.
+- [x] Retrying the same key with the same request fingerprint returns the original Run/result.
+- [x] Retrying the same key with a different request fingerprint is rejected.
+- [x] In-flight and terminal retries are both deduplicated across runtime restarts.
+- [x] The reproduced duplicate-side-effect test executes the side effect exactly once.
+- [x] Idempotency records are transactional and bounded by a documented retention policy.
