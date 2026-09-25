@@ -243,9 +243,10 @@ test("v0.4 execution reliability: resume summaries are compact and bounded", asy
   });
 
   assert.equal(summaries.length, 3);
+  const currentTask = runtime.taskService.get(task.task_id);
   assert.deepEqual(
     summaries.map((entry) => entry.process_id),
-    task.process_ids.slice(-3),
+    currentTask.process_ids.slice(-3),
   );
   for (const entry of summaries) {
     assert.equal("shell" in entry, false);

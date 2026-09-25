@@ -5,7 +5,6 @@ import { createServer } from "node:http";
 import {
   mkdir,
   mkdtemp,
-  readFile,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -424,14 +423,10 @@ test("v0.2-03: runtime applies policy, persisted-output and audit-retention conf
   assert.equal(audit.truncated_before_sequence, true);
   assert.equal(audit.next_sequence, 6);
 
-  const storedAudit = JSON.parse(
-    await readFile(
-      path.join(stateDir, "audits", "task_config_test.json"),
-      "utf8",
-    ),
-  );
+  const storedAudit = runtime.stateStore.loadAudit("task_config_test");
   assert.equal(storedAudit.entries.length, 3);
   assert.equal(storedAudit.next_sequence, 6);
+  runtime.stateStore.close?.();
 });
 
 test("v0.2-03: main entrypoint follows transport.mode from config file", async (t) => {

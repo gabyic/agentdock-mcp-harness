@@ -496,9 +496,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     safe(async ({ task_id, message }) => {
       const task = taskService.assertActive(task_id);
       const result = await gitService.commit(task.worktree_path, { message });
-      task.latest_commit_sha = result.commit_sha;
-      task.updated_at = new Date().toISOString();
-      taskService.save(task);
+      taskService.recordCommit(task_id, result.commit_sha);
       auditService.append(task_id, {
         event: "GIT_COMMIT",
         commit_sha: result.commit_sha,

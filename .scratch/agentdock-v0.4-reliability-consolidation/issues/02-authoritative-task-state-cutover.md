@@ -4,12 +4,12 @@
 
 **Blocked by:** 01: Transactional State Foundation
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Mutable Task state is never authoritative from a runtime-local stale object cache.
-- [ ] Two independent runtimes can append different process ids to one Task without lost updates.
-- [ ] A COMPLETED or CANCELLED Task cannot transition back to ACTIVE.
-- [ ] A stale runtime cannot start a new Run on a terminal Task.
-- [ ] Approval, Audit, Workflow, and persisted Run metadata mutations use the same transactional state seam.
-- [ ] Production defaults to SQLite authoritative state while legacy JSON is treated as import/rollback material, not a second writer.
-- [ ] Migration and rollback-window checks are documented and tested.
+- [x] Mutable Task state is never authoritative from a runtime-local stale object cache.
+- [x] Two independent runtimes can append different process ids to one Task without lost updates.
+- [x] A COMPLETED or CANCELLED Task cannot transition back to ACTIVE.
+- [x] A stale runtime cannot start a new Run on a terminal Task.
+- [x] Approval, Audit, Workflow, and persisted Run metadata mutations use the same transactional state seam.
+- [x] Production defaults to SQLite authoritative state while legacy JSON is treated as import/rollback material, not a second writer.
+- [x] Migration and rollback-window checks are documented and tested.

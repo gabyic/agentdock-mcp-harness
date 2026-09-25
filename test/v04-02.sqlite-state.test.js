@@ -36,7 +36,7 @@ function runWorker({ stateDir, iterations, workerId }) {
   });
 }
 
-test("v0.4 state backend defaults to json and supports explicit sqlite", async (t) => {
+test("v0.4 state backend defaults to sqlite and supports explicit json compatibility", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agentdock-v04-state-config-"));
   t.after(async () => rm(root, { recursive: true, force: true }));
 
@@ -45,23 +45,23 @@ test("v0.4 state backend defaults to json and supports explicit sqlite", async (
     configPath: null,
     env: {},
   });
-  assert.equal(defaults.config.state.backend, "json");
+  assert.equal(defaults.config.state.backend, "sqlite");
 
   const selected = loadAgentDockConfig({
     homeDir: root,
     configPath: null,
     env: {
-      AGENTDOCK_STATE_DIR: path.join(root, "state"),
-      AGENTDOCK_STATE_BACKEND: "sqlite",
+      AGENTDOCK_STATE_DIR: path.join(root, "json-state"),
+      AGENTDOCK_STATE_BACKEND: "json",
     },
   });
-  assert.equal(selected.config.state.backend, "sqlite");
+  assert.equal(selected.config.state.backend, "json");
   assert.equal(
     selected.metadata.env_overrides.includes("AGENTDOCK_STATE_BACKEND"),
     true,
   );
 
-  const runtime = createAgentDockRuntime({ config: selected.config });
+  const runtime = createAgentDockRuntime({ config: defaults.config });
   assert.equal(runtime.stateStore.backend, "sqlite");
   await runtime.processService.shutdownOwned({ graceMs: 0, killWaitMs: 0 });
   runtime.stateStore.close?.();

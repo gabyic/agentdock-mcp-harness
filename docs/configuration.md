@@ -44,7 +44,7 @@ Example:
   "version": 1,
   "state": {
     "dir": "~/.local/state/agentdock",
-    "backend": "json",
+    "backend": "sqlite",
     "persisted_process_output_bytes": 65536
   },
   "audit": {
@@ -112,22 +112,37 @@ Durable-state adapter used by AgentDock.
 
 Supported values:
 
-- `json` — compatibility/default during the v0.4 expansion phase.
-- `sqlite` — transactional SQLite adapter backed by `agentdock.db` in `state.dir`.
+- `sqlite` — the production/default authoritative backend, backed by `agentdock.db` in `state.dir`.
+- `json` — an explicit compatibility adapter for single-process development, tests, or a controlled rollback window. It is not a supported multi-runtime authoritative backend.
 
-Default for Ticket 01 remains:
-
-```text
-json
-```
-
-SQLite uses built-in Node SQLite; no extra database package is required. When first opened, it idempotently imports supported legacy JSON Task/Process/Audit/Workflow records without deleting or overwriting the legacy files. Production authority cutover to SQLite is deliberately deferred to the next reliability ticket.
-
-Environment override:
+Default:
 
 ```text
-AGENTDOCK_STATE_BACKEND=sqlite
+sqlite
 ```
+
+SQLite uses built-in Node SQLite; no extra database package is required. When first opened, it idempotently imports supported legacy JSON Task/Process/Audit/Workflow records without deleting or overwriting the legacy files. After SQLite becomes authoritative, the legacy JSON files are retained as read-only migration/rollback material rather than a second writer.
+
+Environment override for an explicitly requested compatibility run:
+
+```text
+AGENTDOCK_STATE_BACKEND=json
+```
+
+#### SQLite authoritative-state migration and rollback window
+
+For an existing JSON installation, perform cutover as a controlled state migration:
+
+1. Stop or quiesce all AgentDock writers so JSON cannot change during the final import.
+2. Take a filesystem backup of the current state directory.
+3. Start AgentDock with the SQLite backend; the import is idempotent and leaves legacy JSON files unchanged.
+4. Compare Task, Process, Audit, and Workflow record counts and run SQLite `PRAGMA integrity_check`.
+5. Start all AgentDock transports against the same SQLite state directory and run an end-to-end health/MCP smoke test.
+6. Keep the legacy JSON files read-only for the rollback window.
+
+The rollback boundary is important: **once authoritative SQLite mutations begin, the old JSON files are stale history, not current state.** At that point, a rollback must restore the pre-cutover state backup or a deliberate SQLite backup/export. Simply setting `AGENTDOCK_STATE_BACKEND=json` after SQLite has diverged can discard newer durable state and is not a valid production rollback.
+
+Before cutover, or in an isolated single-process compatibility/test environment, explicit JSON mode remains supported.
 
 ### `state.persisted_process_output_bytes`
 

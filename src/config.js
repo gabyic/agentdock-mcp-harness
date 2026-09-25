@@ -80,7 +80,7 @@ const AgentDockConfigSchema = z
     state: z
       .object({
         dir: z.string().min(1),
-        backend: z.enum(["json", "sqlite"]).default("json"),
+        backend: z.enum(["json", "sqlite"]).default("sqlite"),
         persisted_process_output_bytes: z
           .number()
           .int()
@@ -239,7 +239,7 @@ function defaultLayer(homeDir) {
     version: CONFIG_SCHEMA_VERSION,
     state: {
       dir: path.join(homeDir, DEFAULT_STATE_RELATIVE_PATH),
-      backend: "json",
+      backend: "sqlite",
       persisted_process_output_bytes:
         DEFAULT_PERSISTED_PROCESS_OUTPUT_BYTES,
     },
