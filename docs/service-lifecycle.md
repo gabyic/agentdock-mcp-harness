@@ -66,13 +66,19 @@ KillMode=control-group
 
 so detached Task subprocesses remain in the service cgroup and are cleaned with the failed service.
 
-On the next AgentDock instance, persisted Process records that were still `RUNNING` or `CANCELLING` are restored as:
+Current AgentDock releases persist an execution-owner lease for every running Run/process.
+
+A second live AgentDock runtime that reads the same durable state does **not** rewrite a remotely owned `RUNNING` process. It reports remote ownership and observes the durable record until the real owner publishes a terminal state.
+
+A stale heartbeat by itself is not enough to corrupt process state. If the recorded owner PID is still alive, the observer keeps the process active and reports the stale owner lease.
+
+Only when execution ownership is actually lost does AgentDock reconcile a persisted `RUNNING` or `CANCELLING` record to:
 
 ```text
 INTERRUPTED
 ```
 
-with the existing durable reason:
+with the durable reason:
 
 ```text
 AgentDock restarted or lost ownership of the running process.
@@ -81,8 +87,9 @@ AgentDock restarted or lost ownership of the running process.
 This distinction is deliberate:
 
 ```text
-CANCELLED   = AgentDock intentionally terminated a Process.
-INTERRUPTED = AgentDock lost ownership unexpectedly.
+CANCELLED   = AgentDock intentionally terminated a Run/process.
+INTERRUPTED = AgentDock actually lost execution ownership.
+REMOTE      = another live AgentDock runtime currently owns execution.
 ```
 
 ## Health command

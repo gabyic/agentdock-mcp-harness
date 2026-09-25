@@ -41,6 +41,8 @@ With AgentDock, the reasoning stays inside the chat product you already use. If 
 
 > Naming note: this project is not affiliated with other projects named AgentDock. The public repository uses **AgentDock MCP Harness** to distinguish this execution harness from unrelated agent frameworks and desktop tools.
 
+**Get started:** [Quick deployment](#quick-deployment) · [Full deployment guide](docs/deployment.md) · [Configuration](docs/configuration.md) · [Service lifecycle](docs/service-lifecycle.md)
+
 ## What problem does it solve?
 
 ### 1. ChatGPT Web is smart, but it cannot normally work on your server
@@ -342,9 +344,41 @@ AgentDock currently targets:
 - Git
 - an MCP client capable of invoking the exposed tools
 
-The v0.1 release provides stdio. The v0.2 development line now supports both stdio and native stateless Streamable HTTP on loopback by default.
+AgentDock supports stdio and native stateless Streamable HTTP. Remote deployments should keep AgentDock on loopback/private networking and add an authenticated connection layer in front.
 
 macOS and Windows execution backends are not implemented yet.
+
+## Quick deployment
+
+For a Linux server that will be used from ChatGPT or another remote MCP client:
+
+```bash
+git clone https://github.com/gabyic/agentdock-mcp-harness.git
+cd agentdock-mcp-harness
+./scripts/install.sh
+
+mkdir -p ~/.config/systemd/user
+cp ~/.local/share/agentdock-mcp-harness/deploy/systemd/agentdock-http.service \
+  ~/.config/systemd/user/agentdock-http.service
+
+systemctl --user daemon-reload
+systemctl --user enable --now agentdock-http.service
+
+agentdock doctor
+agentdock health
+```
+
+The default remote MCP endpoint stays private on:
+
+```text
+http://127.0.0.1:3100/mcp
+```
+
+For ChatGPT, the recommended deployment is **AgentDock on loopback + OpenAI Secure MCP Tunnel** when your OpenAI account/workspace supports it. An authenticated HTTPS/OAuth MCP gateway is the alternative for self-managed public ingress.
+
+**Do not expose AgentDock's unauthenticated HTTP endpoint directly to the public internet.**
+
+The complete step-by-step guide, including ChatGPT Developer Mode, Secure MCP Tunnel, tool refresh after upgrades, production verification, and troubleshooting, is in **[docs/deployment.md](docs/deployment.md)**.
 
 ## Install from source
 
@@ -358,7 +392,7 @@ cd agentdock-mcp-harness
 
 The installer performs a user-local installation by default and does not require root for Core.
 
-AgentDock v0.2 development builds use a versioned JSON configuration schema at `~/.config/agentdock/config.json`. Existing `AGENTDOCK_*` environment variables remain supported as higher-precedence deployment overrides.
+AgentDock uses a versioned JSON configuration schema at `~/.config/agentdock/config.json`. Existing `AGENTDOCK_*` environment variables remain supported as higher-precedence deployment overrides.
 
 After installation, verify the environment with:
 

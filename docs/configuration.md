@@ -1,6 +1,6 @@
 # Configuration
 
-AgentDock v0.2 uses a versioned JSON configuration schema.
+AgentDock uses a versioned JSON configuration schema.
 
 ## Default location
 
@@ -109,7 +109,7 @@ Default:
 
 Maximum diagnostic process-output bytes persisted per Process snapshot.
 
-Live process output remains faithful while AgentDock owns the Process. This setting only bounds the durable diagnostic snapshot.
+This setting bounds the durable diagnostic tail. Live Run/process output is also retained in a bounded in-memory window and is read through cursor-based pages, so callers must continue from `next_cursor` instead of assuming the entire transcript is retained forever.
 
 Default:
 
