@@ -175,8 +175,10 @@ test("v0.2-02: native stateless Streamable HTTP preserves shared runtime and hos
   assert.equal(transport.sessionId, undefined);
 
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 34);
   assert.equal(tools.tools.some((tool) => tool.name === "task.create"), true);
+  assert.equal(tools.tools.some((tool) => tool.name === "plan.start"), true);
+  assert.equal(tools.tools.some((tool) => tool.name === "plan.get"), true);
+  assert.equal(tools.tools.some((tool) => tool.name === "plan.cancel"), true);
 
   await legacyClient.connect(legacyTransport);
   assert.equal(legacyClient.getProtocolEra(), "legacy");

@@ -248,6 +248,42 @@ AGENTDOCK_HTTP_HOST=127.0.0.1
 
 Do not put secrets in a world-readable file. Normal AgentDock config/env precedence still applies.
 
+## Minimal durable verification Plans
+
+Long deterministic verification chains should not depend on a ChatGPT response stream remaining connected.
+
+The minimal v0.4 Plan Runner exposes:
+
+```text
+plan.start
+plan.get
+plan.cancel
+```
+
+A Plan is an ordered set of shell/argv verification steps. `plan.start` requires an `idempotency_key`, persists the Plan, returns immediately, and lets the owning AgentDock runtime continue the steps in the background. Each Plan step starts its Run with a stable internal idempotency key, so an exact Plan retry does not repeat the side effect.
+
+Successful minimal Plans stop at:
+
+```text
+READY_TO_COMMIT
+```
+
+They **do not** automatically commit or call `task.finish`. Git-result retention and Completion Contract evidence are separate reliability tickets and must land before automatic finalization is safe.
+
+A failed, cancelled, interrupted, or timed-out step stops the Plan at:
+
+```text
+AWAITING_ASSISTANT
+```
+
+Later steps are not executed. AgentDock does not invent a repair and does not invoke a hidden LLM.
+
+Existing `task.resume` includes the latest Plan summary without changing its input schema. While a Plan runs it returns `WAIT_FOR_PLAN`; when deterministic execution needs reasoning it returns `ASSISTANT_REQUIRED`.
+
+Minimal Plans intentionally do not accept custom `env` values yet. This avoids creating a new durable secret-storage path before the durable-output/secret-redaction work is complete.
+
+This first implementation protects against **ChatGPT/client response-stream interruption while the owning AgentDock service remains alive**. Automatic Plan takeover/resume after an AgentDock service crash or restart belongs to the later Single Run Supervisor/full Plan Runner work.
+
 ## Test contract
 
 v0.2-06 black-box coverage verifies:

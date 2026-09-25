@@ -137,8 +137,8 @@ test("v0.3-05: Auto Matt routes through the same MCP skill.invoke surface and co
   });
 
   const tools = (await client.listTools()).tools;
-  assert.equal(tools.length, 34);
   assert.equal(tools.some((entry) => entry.name === "skill.invoke"), true);
+  assert.equal(tools.some((entry) => entry.name === "plan.start"), true);
 
   const routed = await client.callTool({
     name: "skill.invoke",

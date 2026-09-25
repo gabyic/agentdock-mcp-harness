@@ -8,6 +8,7 @@ import { FileEditService } from "./file-edit-service.js";
 import { FileQueryService } from "./file-query-service.js";
 import { GitService } from "./git-service.js";
 import { IdempotencyService } from "./idempotency-service.js";
+import { PlanService } from "./plan-service.js";
 import { PolicyService } from "./policy-service.js";
 import { ProcessService } from "./process-service.js";
 import { SkillService } from "./skill-service.js";
@@ -80,6 +81,9 @@ export const TOOL_RISK_PROFILES = Object.freeze({
   "run.start": { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   "run.get": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "run.cancel": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  "plan.start": { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  "plan.get": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "plan.cancel": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   "skill.list": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "skill.search": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "skill.read": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -172,6 +176,12 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     auditService,
     idempotencyService,
   });
+  const planService = new PlanService({
+    stateStore,
+    taskService,
+    processService,
+    auditService,
+  });
   const skillService = new SkillService({
     stateStore,
     autoRoutingEnabled: resolvedConfig.skills.matt_auto_routing,
@@ -193,6 +203,7 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     fileEditService,
     idempotencyService,
     processService,
+    planService,
     skillService,
     workflowService,
     config: resolvedConfig,
@@ -210,6 +221,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     fileQueryService,
     fileEditService,
     processService,
+    planService,
     skillService,
     workflowService,
   } = services;
@@ -266,15 +278,20 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
         compact: true,
       });
       const activeProcesses = processService.activeForTask(task_id);
+      const latestPlan = planService.latestForTask(task_id);
       const diff = await gitService.diff(task.worktree_path);
       const recommendedNextAction =
-        activeProcesses.length > 0
-          ? "WAIT_FOR_PROCESS"
-          : diff.changed_files.length > 0
-            ? "COMMIT_REQUIRED"
-            : task.status === "ACTIVE"
-              ? "TASK_FINISH_REQUIRED"
-              : "NONE";
+        latestPlan?.status === "RUNNING"
+          ? "WAIT_FOR_PLAN"
+          : latestPlan?.status === "AWAITING_ASSISTANT"
+            ? "ASSISTANT_REQUIRED"
+            : activeProcesses.length > 0
+              ? "WAIT_FOR_PROCESS"
+              : diff.changed_files.length > 0
+                ? "COMMIT_REQUIRED"
+                : task.status === "ACTIVE"
+                  ? "TASK_FINISH_REQUIRED"
+                  : "NONE";
 
       auditService.append(task_id, {
         event: "TASK_RESUMED",
@@ -283,6 +300,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
         process_count: processCount,
         returned_process_count: processes.length,
         active_process_count: activeProcesses.length,
+        latest_plan_status: latestPlan?.status ?? null,
         recommended_next_action: recommendedNextAction,
       });
       const { process_ids: _processIds, ...taskSummary } = task;
@@ -292,6 +310,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
         processes,
         active_processes: activeProcesses,
         process_history_truncated: processCount > processes.length,
+        latest_plan: latestPlan,
         recommended_next_action: recommendedNextAction,
       });
     }),
@@ -733,6 +752,72 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       });
       return toolResult({ run_id, ...cancelled });
     }),
+  );
+
+
+  registerTool(
+    server,
+    "plan.start",
+    "Start an idempotent durable deterministic verification Plan. Steps continue in AgentDock after this MCP response returns; successful Plans stop at READY_TO_COMMIT and failures stop at AWAITING_ASSISTANT.",
+    {
+      task_id: z.string().min(1),
+      idempotency_key: z.string().min(1).max(256),
+      steps: z.array(
+        z.object({
+          step_id: z.string().min(1).max(128),
+          argv: z.array(z.string()).min(1).optional(),
+          shell: z.string().min(1).optional(),
+          cwd: z.string().optional(),
+          timeout_ms: z.number().int().min(1000).max(1800000).optional(),
+        }),
+      ).min(1).max(32),
+    },
+    safe(async ({ task_id, idempotency_key, steps }) =>
+      toolResult(
+        planService.start({
+          taskId: task_id,
+          idempotencyKey: idempotency_key,
+          steps,
+        }),
+      )),
+  );
+
+  registerTool(
+    server,
+    "plan.get",
+    "Read durable Plan progress, optionally waiting up to 10 seconds for its revision or terminal status to change.",
+    {
+      task_id: z.string().min(1),
+      plan_id: z.string().min(1),
+      after_revision: z.number().int().min(0).optional(),
+      wait_ms: z.number().int().min(0).max(10000).optional(),
+    },
+    safe(async ({ task_id, plan_id, after_revision, wait_ms }) =>
+      toolResult(
+        await planService.wait({
+          taskId: task_id,
+          planId: plan_id,
+          afterRevision: after_revision,
+          waitMs: wait_ms,
+        }),
+      )),
+  );
+
+  registerTool(
+    server,
+    "plan.cancel",
+    "Request durable cancellation of a deterministic Plan. The owning runtime stops after the current Run settles; local Runs are cancelled best-effort immediately.",
+    {
+      task_id: z.string().min(1),
+      plan_id: z.string().min(1),
+    },
+    safe(async ({ task_id, plan_id }) =>
+      toolResult(
+        planService.cancel({
+          taskId: task_id,
+          planId: plan_id,
+        }),
+      )),
   );
 
 

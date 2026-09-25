@@ -1,8 +1,8 @@
 # 09: Durable Deterministic Plan Runner
 
-**What to build:** Allow already-decided deterministic development/verification steps to continue across ChatGPT response-stream interruptions while stopping cleanly whenever new reasoning or human input is required.
+**What to build:** Expand the Minimal Durable Verification Runner into the full deterministic development Plan Runner, including Supervisor-backed restart recovery, explicit reasoning/human barriers, Completion Contract evidence, and safe commit/finish steps.
 
-**Blocked by:** 03: Idempotent Mutating Operations; 06: Single Run Supervisor; 07: Truthful Task Activity and Blockers; 08: Completion Evidence Contract
+**Blocked by:** 03A: Minimal Durable Verification Runner; 06: Single Run Supervisor; 07: Truthful Task Activity and Blockers; 08: Completion Evidence Contract
 
 **Status:** ready-for-agent
 
