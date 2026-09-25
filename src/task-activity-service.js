@@ -107,6 +107,14 @@ export class TaskActivityService {
         approval_ids: approvals.map((approval) => approval.approval_id),
       };
       recommendedNextAction = "APPROVAL_REQUIRED";
+    } else if (latestPlan?.status === "AWAITING_USER") {
+      activityState = "AWAITING_USER";
+      currentBlocker = { kind: "USER", code: latestPlan.blocker?.code ?? "PLAN_HUMAN_CONFIRMATION_REQUIRED", plan_id: latestPlan.plan_id, details: latestPlan.blocker ?? null };
+      recommendedNextAction = "USER_INPUT_REQUIRED";
+    } else if (latestPlan?.status === "AWAITING_APPROVAL") {
+      activityState = "AWAITING_APPROVAL";
+      currentBlocker = { kind: "APPROVAL", code: latestPlan.blocker?.code ?? "APPROVAL_REQUIRED", plan_id: latestPlan.plan_id, details: latestPlan.blocker ?? null };
+      recommendedNextAction = "APPROVAL_REQUIRED";
     } else if (latestPlan?.status === "AWAITING_ASSISTANT") {
       activityState = "AWAITING_ASSISTANT";
       currentBlocker = {

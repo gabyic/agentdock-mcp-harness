@@ -277,8 +277,9 @@ Already-decided deterministic verification chains can continue after the initiat
 - `plan.start`
 - `plan.get`
 - `plan.cancel`
+- `plan.continue`
 
-The minimal Plan Runner is idempotent and executes ordered shell/argv steps in the Task worktree. Passing Plans stop at `READY_TO_COMMIT`; failed/interrupted steps stop at `AWAITING_ASSISTANT`. It does not invoke a hidden LLM or automatically commit/finish the Task.
+The durable Plan Runner executes only caller-declared deterministic steps. Steps have stable ids and idempotency keys, may form an acyclic dependency graph, declare exit-code success criteria and Completion Contract evidence, and retry only when explicitly marked safe. It supports explicit reasoning and human barriers, policy approval waits, safe Git commit and Task finish actions, and Supervisor-backed recovery after a transport process restarts. `plan.continue` releases only an explicit barrier or an already-resolved approval; failed or ambiguous work remains `AWAITING_ASSISTANT` and cannot be auto-repaired. No server-side LLM or hidden reasoning loop is used.
 
 ### Git
 

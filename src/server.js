@@ -88,6 +88,7 @@ export const TOOL_RISK_PROFILES = Object.freeze({
   "plan.start": { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   "plan.get": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "plan.cancel": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  "plan.continue": { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   "skill.list": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "skill.search": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "skill.read": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -188,6 +189,7 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     taskService,
     processService,
     auditService,
+    gitService,
   });
   const taskActivityService = new TaskActivityService();
   const taskHygieneService = new TaskHygieneService({
@@ -220,7 +222,10 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     processService,
     runSupervisor: execution.supervisor,
     supervisorMode: execution.supervisorMode,
-    closeExecution: execution.close,
+    closeExecution: async (options) => {
+      planService.close();
+      return execution.close(options);
+    },
     planService,
     taskHygieneService,
     taskActivityService,
@@ -397,7 +402,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       }
 
       const latestPlan = planService.latestForTask(task_id);
-      if (latestPlan?.status === "RUNNING") {
+      if (["RUNNING", "AWAITING_ASSISTANT", "AWAITING_APPROVAL", "AWAITING_USER"].includes(latestPlan?.status)) {
         throw new AgentDockError(
           "TASK_PLAN_ACTIVE",
           "Task still has a running deterministic Plan.",
@@ -902,17 +907,30 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
   registerTool(
     server,
     "plan.start",
-    "Start an idempotent durable deterministic verification Plan. Steps continue in AgentDock after this MCP response returns; successful Plans stop at READY_TO_COMMIT and failures stop at AWAITING_ASSISTANT.",
+    "Start an idempotent durable deterministic Plan with dependencies, evidence, explicit barriers, safe retries, and optional guarded commit/finish actions.",
     {
       task_id: z.string().min(1),
       idempotency_key: z.string().min(1).max(256),
       steps: z.array(
         z.object({
           step_id: z.string().min(1).max(128),
+          action: z.enum(["COMMAND", "REASONING_BARRIER", "HUMAN_BARRIER", "GIT_COMMIT", "TASK_FINISH"]).optional(),
+          depends_on: z.array(z.string().min(1).max(128)).optional(),
+          idempotency_key: z.string().min(1).max(256).optional(),
           argv: z.array(z.string()).min(1).optional(),
           shell: z.string().min(1).optional(),
           cwd: z.string().optional(),
           timeout_ms: z.number().int().min(1000).max(1800000).optional(),
+          success_criteria: z.object({ exit_codes: z.array(z.number().int()).min(1) }).optional(),
+          evidence: z.object({
+            kind: z.enum(["TARGETED_TESTS", "FULL_SUITE", "STATIC_CHECK", "DIFF_CHECK", "MIGRATION_CHECK", "PROVIDER_CHECK", "REVIEW"]),
+            summary: z.string().min(1).max(10000),
+          }).optional(),
+          retry: z.object({ safe: z.boolean(), max_attempts: z.number().int().min(1).max(3) }).optional(),
+          message: z.string().min(1).max(10000).optional(),
+          outcome: z.enum(["COMMIT", "NO_CHANGE"]).optional(),
+          reason: z.string().min(1).max(10000).optional(),
+          prompt: z.string().min(1).max(10000).optional(),
         }),
       ).min(1).max(32),
     },
@@ -924,6 +942,20 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
           steps,
         }),
       )),
+  );
+
+  registerTool(
+    server,
+    "plan.continue",
+    "Continue a Plan after its explicit reasoning, human-confirmation, or resolved approval barrier. Failed command/action steps cannot be auto-continued.",
+    {
+      task_id: z.string().min(1),
+      plan_id: z.string().min(1),
+      step_id: z.string().min(1),
+      note: z.string().max(10000).optional(),
+    },
+    safe(async ({ task_id, plan_id, step_id, note }) =>
+      toolResult(planService.continue({ taskId: task_id, planId: plan_id, stepId: step_id, note }))),
   );
 
   registerTool(

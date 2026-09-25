@@ -1,6 +1,6 @@
 # Tool risk register
 
-All 39 tools must expose explicit readOnlyHint, destructiveHint, and openWorldHint values.
+All 40 tools must expose explicit readOnlyHint, destructiveHint, and openWorldHint values.
 
 | Tool | R | D | O | Justification |
 | --- | --- | --- | --- | --- |
@@ -31,6 +31,7 @@ All 39 tools must expose explicit readOnlyHint, destructiveHint, and openWorldHi
 | plan.start | F | T | T | starts durable deterministic command steps |
 | plan.get | T | F | F | reads durable Plan progress and blockers |
 | plan.cancel | F | T | F | requests durable Plan cancellation |
+| plan.continue | F | F | F | explicitly releases a durable reasoning, human, or resolved approval barrier |
 | skill.list | T | F | F | local skill metadata |
 | skill.search | T | F | F | local skill search |
 | skill.read | T | F | F | local skill read |

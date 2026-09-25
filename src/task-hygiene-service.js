@@ -93,7 +93,9 @@ function activeRunsByTask(metadata) {
 function publicPlanStatus(plan) {
   if (!plan) return null;
   const currentStep =
-    (plan.steps ?? []).find((step) => step.status === "RUNNING") ?? null;
+    (plan.steps ?? []).find((step) => ["RUNNING", "WAITING"].includes(step.status))
+    ?? (plan.steps ?? []).find((step) => step.step_id === plan.blocker?.step_id)
+    ?? null;
   return {
     plan_id: plan.plan_id,
     status: plan.status,
@@ -124,6 +126,12 @@ function blockersFor({ task, activeProcesses, latestPlan }) {
   } else if (latestPlan?.status === "AWAITING_ASSISTANT") {
     blockers.push({
       kind: "ASSISTANT",
+      plan_id: latestPlan.plan_id,
+      blocker: latestPlan.blocker ?? null,
+    });
+  } else if (["AWAITING_APPROVAL", "AWAITING_USER"].includes(latestPlan?.status)) {
+    blockers.push({
+      kind: latestPlan.status === "AWAITING_USER" ? "USER" : "APPROVAL",
       plan_id: latestPlan.plan_id,
       blocker: latestPlan.blocker ?? null,
     });
