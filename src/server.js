@@ -10,7 +10,7 @@ import { GitService } from "./git-service.js";
 import { IdempotencyService } from "./idempotency-service.js";
 import { PlanService } from "./plan-service.js";
 import { PolicyService } from "./policy-service.js";
-import { ProcessService } from "./process-service.js";
+import { createProcessExecution } from "./process-execution.js";
 import { SkillService } from "./skill-service.js";
 import { StateStore } from "./state-store.js";
 import { TaskHygieneService } from "./task-hygiene-service.js";
@@ -171,13 +171,15 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     auditService,
   });
   const idempotencyService = new IdempotencyService({ stateStore });
-  const processService = new ProcessService({
+  const execution = createProcessExecution({
+    mode: resolvedConfig.execution.supervisor_mode,
     taskService,
     stateStore,
     approvalService,
     auditService,
     idempotencyService,
   });
+  const processService = execution.processService;
   const planService = new PlanService({
     stateStore,
     taskService,
@@ -209,6 +211,9 @@ export function createAgentDockRuntime({ stateDir, config } = {}) {
     fileEditService,
     idempotencyService,
     processService,
+    runSupervisor: execution.supervisor,
+    supervisorMode: execution.supervisorMode,
+    closeExecution: execution.close,
     planService,
     taskHygieneService,
     skillService,

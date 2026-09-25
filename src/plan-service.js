@@ -303,9 +303,8 @@ export class PlanService {
         owner_instance_id: this.#processes.instanceId,
         started_at: now,
       });
+      this.#ensureDriver(planId);
     }
-
-    this.#ensureDriver(planId);
     return {
       ...publicPlan(plan),
       idempotent_replay: !created,
@@ -390,10 +389,7 @@ export class PlanService {
   #ensureDriver(planId) {
     if (this.#drivers.has(planId)) return;
     const plan = this.#load(planId);
-    if (
-      plan.status !== "RUNNING" ||
-      plan.owner_instance_id !== this.#processes.instanceId
-    ) {
+    if (plan.status !== "RUNNING") {
       return;
     }
     const promise = this.#drive(planId)

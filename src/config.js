@@ -22,6 +22,7 @@ export const CONFIG_ENV_KEYS = new Set([
   "AGENTDOCK_STATE_DIR",
   "AGENTDOCK_STATE_BACKEND",
   "AGENTDOCK_PERSISTED_OUTPUT_BYTES",
+  "AGENTDOCK_SUPERVISOR_MODE",
   "AGENTDOCK_AUDIT_MAX_ENTRIES",
   "AGENTDOCK_POLICY_JSON",
   "AGENTDOCK_MATT_AUTO_ROUTING",
@@ -89,6 +90,12 @@ const AgentDockConfigSchema = z
           .default(DEFAULT_PERSISTED_PROCESS_OUTPUT_BYTES),
       })
       .strict(),
+    execution: z
+      .object({
+        supervisor_mode: z.enum(["auto", "owner", "client"]).default("auto"),
+      })
+      .strict()
+      .default({}),
     audit: z
       .object({
         max_entries_per_task: z
@@ -243,6 +250,9 @@ function defaultLayer(homeDir) {
       persisted_process_output_bytes:
         DEFAULT_PERSISTED_PROCESS_OUTPUT_BYTES,
     },
+    execution: {
+      supervisor_mode: "auto",
+    },
     audit: {
       max_entries_per_task: DEFAULT_AUDIT_MAX_ENTRIES_PER_TASK,
     },
@@ -292,6 +302,12 @@ function envLayer(env) {
     layer.state = {
       ...(layer.state ?? {}),
       persisted_process_output_bytes: outputBytes,
+    };
+  }
+
+  if (env.AGENTDOCK_SUPERVISOR_MODE) {
+    layer.execution = {
+      supervisor_mode: env.AGENTDOCK_SUPERVISOR_MODE.trim().toLowerCase(),
     };
   }
 

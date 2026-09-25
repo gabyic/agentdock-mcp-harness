@@ -253,17 +253,22 @@ export class ProcessService {
     };
 
     if (ACTIVE_STATUSES.has(record.status)) {
-      const ownerState =
-        record.owner_instance_id &&
-        record.owner_instance_id !== this.#instanceId
+      if (record.owner_instance_id === this.#instanceId) {
+        // A durable record claiming this runtime but lacking the in-memory
+        // child handle is never enough proof to signal its PID. Treat it as
+        // interrupted rather than guessing from pid liveness.
+        this.#interruptLostOwner(record);
+      } else {
+        const ownerState = record.owner_instance_id
           ? this.#ownerState(record.owner_instance_id)
           : "DEAD";
 
-      if (ownerState === "ALIVE" || ownerState === "STALE") {
-        record.remote_owner = true;
-        record.remote_owner_stale = ownerState === "STALE";
-      } else {
-        this.#interruptLostOwner(record);
+        if (ownerState === "ALIVE" || ownerState === "STALE") {
+          record.remote_owner = true;
+          record.remote_owner_stale = ownerState === "STALE";
+        } else {
+          this.#interruptLostOwner(record);
+        }
       }
     }
 

@@ -97,18 +97,19 @@ test("v0.4 execution reliability: a second runtime observes a live owner without
     ],
   });
 
-  const observed = observer.processService.status({
+  const observed = await observer.processService.status({
     taskId: task.task_id,
     processId: started.process_id,
   });
 
   assert.equal(observed.status, "RUNNING");
-  assert.equal(observed.ownership, "REMOTE");
+  assert.equal(observed.ownership, "LOCAL");
+  assert.equal(observer.supervisorMode, "client");
 
   await waitExited(owner, task.task_id, started.process_id);
 
-  const observedTerminal = await waitFor(() => {
-    const status = observer.processService.status({
+  const observedTerminal = await waitFor(async () => {
+    const status = await observer.processService.status({
       taskId: task.task_id,
       processId: started.process_id,
     });
@@ -147,14 +148,15 @@ test("v0.4 execution reliability: stale heartbeat with a live owner never corrup
     heartbeat_at: "2000-01-01T00:00:00.000Z",
   });
 
-  const observed = observer.processService.status({
+  const observed = await observer.processService.status({
     taskId: task.task_id,
     processId: started.process_id,
   });
 
   assert.equal(observed.status, "RUNNING");
-  assert.equal(observed.ownership, "REMOTE");
-  assert.equal(observed.owner_lease_stale, true);
+  assert.equal(observed.ownership, "LOCAL");
+  assert.equal(observer.supervisorMode, "client");
+  assert.equal(observed.owner_lease_stale, false);
 
   await waitExited(owner, task.task_id, started.process_id);
 });

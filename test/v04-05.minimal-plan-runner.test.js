@@ -59,8 +59,7 @@ async function cleanup(runtime, taskId, root) {
       await runtime.taskService.cleanup(taskId);
     }
   } catch {}
-  await runtime.processService
-    .shutdownOwned({ graceMs: 1000, killWaitMs: 100 })
+  await (runtime.closeExecution?.({ graceMs: 1000, killWaitMs: 100 }) ?? runtime.processService.shutdownOwned({ graceMs: 1000, killWaitMs: 100 }))
     .catch(() => {});
   runtime.stateStore.close?.();
   await rm(root, { recursive: true, force: true });
@@ -237,7 +236,8 @@ test("v0.4 minimal plan runner keeps one owner runtime across exact cross-runtim
   assert.equal(replay.plan_id, first.plan_id);
   assert.equal(replay.idempotent_replay, true);
   assert.equal(replay.owner_instance_id, owner.processService.instanceId);
-  assert.notEqual(replay.owner_instance_id, observer.processService.instanceId);
+  assert.equal(observer.supervisorMode, "client");
+  assert.equal(observer.processService.instanceId, owner.processService.instanceId);
 
   await waitPlan(owner, task.task_id, first.plan_id, ["READY_TO_COMMIT"]);
 

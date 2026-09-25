@@ -20,10 +20,15 @@ export async function gracefulServiceShutdown({
       acceptingStopped = true;
     }
 
-    const processResult = await runtime.processService.shutdownOwned({
-      graceMs: processGraceMs,
-      killWaitMs: processKillWaitMs,
-    });
+    const processResult = runtime.closeExecution
+      ? await runtime.closeExecution({
+          graceMs: processGraceMs,
+          killWaitMs: processKillWaitMs,
+        })
+      : await runtime.processService.shutdownOwned({
+          graceMs: processGraceMs,
+          killWaitMs: processKillWaitMs,
+        });
 
     if (closeTransport) {
       await closeTransport();

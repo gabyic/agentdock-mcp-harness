@@ -58,7 +58,7 @@ async function waitTerminal(runtime, taskId, processId) {
 }
 
 async function stopRuntime(runtime) {
-  await runtime.processService.shutdownOwned({ graceMs: 1000, killWaitMs: 100 });
+  await (runtime.closeExecution?.({ graceMs: 1000, killWaitMs: 100 }) ?? runtime.processService.shutdownOwned({ graceMs: 1000, killWaitMs: 100 }));
   runtime.stateStore.close?.();
 }
 
@@ -287,7 +287,7 @@ test("v0.4 idempotency: two live runtimes racing the same key create one Run", a
 
   let terminal;
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    terminal = verifier.processService.status({
+    terminal = firstRuntime.processService.status({
       taskId: task.task_id,
       processId: first.process_id,
     });
