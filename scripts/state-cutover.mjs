@@ -248,6 +248,26 @@ export async function assertNoOpenStateHandles(options) {
   return result;
 }
 
+async function asStateOwner(stateInfo, operation) {
+  const effectiveUid = process.geteuid?.();
+  const effectiveGid = process.getegid?.();
+  const canSwitchIdentity =
+    effectiveUid === 0 &&
+    Number.isInteger(stateInfo.uid) &&
+    Number.isInteger(stateInfo.gid) &&
+    stateInfo.uid !== effectiveUid;
+  if (!canSwitchIdentity) return operation();
+
+  process.setegid(stateInfo.gid);
+  process.seteuid(stateInfo.uid);
+  try {
+    return await operation();
+  } finally {
+    process.seteuid(effectiveUid);
+    process.setegid(effectiveGid);
+  }
+}
+
 export async function runStateCutover(options, { procRoot = "/proc" } = {}) {
   if (!options?.stateDir || !options?.backupDir) {
     throw new Error("stateDir and backupDir are required.");
@@ -293,18 +313,20 @@ export async function runStateCutover(options, { procRoot = "/proc" } = {}) {
     );
   }
 
-  await mkdir(path.dirname(options.backupDir), { recursive: true, mode: 0o700 });
   const stateRoot = await realpath(options.stateDir);
-  const backupParent = await realpath(path.dirname(options.backupDir));
-  const physicalBackupDir = path.join(backupParent, path.basename(options.backupDir));
-  if (inside(stateRoot, physicalBackupDir)) {
-    throw new Error("Backup directory must be physically outside the state directory.");
-  }
-  await cp(options.stateDir, options.backupDir, {
-    recursive: true,
-    errorOnExist: true,
-    force: false,
-    preserveTimestamps: true,
+  await asStateOwner(stateInfo, async () => {
+    await mkdir(path.dirname(options.backupDir), { recursive: true, mode: 0o700 });
+    const backupParent = await realpath(path.dirname(options.backupDir));
+    const physicalBackupDir = path.join(backupParent, path.basename(options.backupDir));
+    if (inside(stateRoot, physicalBackupDir)) {
+      throw new Error("Backup directory must be physically outside the state directory.");
+    }
+    await cp(options.stateDir, options.backupDir, {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+      preserveTimestamps: true,
+    });
   });
   await assertNoLiveRuntimeLease(options.stateDir);
   if (process.platform === "linux") {
@@ -315,33 +337,35 @@ export async function runStateCutover(options, { procRoot = "/proc" } = {}) {
     });
   }
 
-  const store = new StateStore({
-    stateDir: options.stateDir,
-    backend: "sqlite",
-    importLegacy: !databaseExisted,
-  });
   let report;
   let accepted = false;
-  try {
-    report = store.legacyImportReport();
-    const initialCutover = !databaseExisted;
-    accepted = report.integrity_check === "ok" &&
-      report.identity_complete &&
-      (!initialCutover || report.content_matches_legacy);
-    if (accepted) {
-      store.markLegacyImportComplete({
-        cutover_mode: initialCutover ? "INITIAL_JSON_IMPORT" : "EXISTING_SQLITE_BACKUP",
-        existing_sqlite_authoritative_confirmed:
-          databaseExisted && !previousMarker
-            ? options.existingSqliteAuthoritative
-            : false,
-        legacy_document_count: report.legacy_document_count,
-        sqlite_document_count: report.sqlite_document_count,
-      });
+  await asStateOwner(stateInfo, async () => {
+    const store = new StateStore({
+      stateDir: options.stateDir,
+      backend: "sqlite",
+      importLegacy: !databaseExisted,
+    });
+    try {
+      report = store.legacyImportReport();
+      const initialCutover = !databaseExisted;
+      accepted = report.integrity_check === "ok" &&
+        report.identity_complete &&
+        (!initialCutover || report.content_matches_legacy);
+      if (accepted) {
+        store.markLegacyImportComplete({
+          cutover_mode: initialCutover ? "INITIAL_JSON_IMPORT" : "EXISTING_SQLITE_BACKUP",
+          existing_sqlite_authoritative_confirmed:
+            databaseExisted && !previousMarker
+              ? options.existingSqliteAuthoritative
+              : false,
+          legacy_document_count: report.legacy_document_count,
+          sqlite_document_count: report.sqlite_document_count,
+        });
+      }
+    } finally {
+      store.close();
     }
-  } finally {
-    store.close();
-  }
+  });
 
   const initialCutover = !databaseExisted;
   const output = {
@@ -351,6 +375,7 @@ export async function runStateCutover(options, { procRoot = "/proc" } = {}) {
     backup_dir: options.backupDir,
     backup_created: true,
     rollback_source: options.backupDir,
+    state_owner: { uid: stateInfo.uid, gid: stateInfo.gid },
     previous_cutover_verified: Boolean(previousMarker),
     existing_sqlite_authoritative_confirmed:
       databaseExisted && !previousMarker

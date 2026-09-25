@@ -6,6 +6,7 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -49,6 +50,7 @@ test("v0.4 state cutover creates a rollback backup and cross-checks every legacy
   t.after(async () => rm(root, { recursive: true, force: true }));
 
   const procRoot = await isolatedProcRoot(root);
+  const stateOwner = await stat(stateDir);
   const result = await runStateCutover({
     stateDir,
     backupDir,
@@ -62,6 +64,16 @@ test("v0.4 state cutover creates a rollback backup and cross-checks every legacy
   assert.equal(result.report.content_matches_legacy, true);
   assert.equal(result.report.legacy_document_count, 6);
   assert.equal(result.previous_cutover_verified, false);
+  assert.deepEqual(result.state_owner, {
+    uid: stateOwner.uid,
+    gid: stateOwner.gid,
+  });
+  const databaseOwner = await stat(path.join(stateDir, "agentdock.db"));
+  const backupOwner = await stat(backupDir);
+  assert.equal(databaseOwner.uid, stateOwner.uid);
+  assert.equal(databaseOwner.gid, stateOwner.gid);
+  assert.equal(backupOwner.uid, stateOwner.uid);
+  assert.equal(backupOwner.gid, stateOwner.gid);
 
   const verified = new StateStore({ stateDir, backend: "sqlite", importLegacy: false });
   assert.equal(

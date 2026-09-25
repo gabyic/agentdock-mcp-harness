@@ -28,7 +28,7 @@ sudo systemctl is-active agentdock-mcp.service agentdock-http.service agentdock-
 
 Do not continue merely because the three main PIDs exited. Confirm the service cgroups are empty and that no same-user process still has `agentdock.db`, its WAL files, or another path below the state directory open. The cutover command performs a second Linux `/proc/<pid>/fd` scan and rejects any live PID recorded in a runtime lease even when that lease heartbeat is stale. The lease check alone is not sufficient because HTTP and MCP client runtimes are also SQLite writers.
 
-Choose a new backup path outside the state directory. The backup command refuses an existing destination, a destination physically nested in state, a live Supervisor lease, or an open state-owner handle. Run it with enough privilege to inspect protected `/proc/<pid>/fd` directories; the scanner targets the state directory owner's UID rather than the invoking UID, so running it as root does not skip the service account:
+Choose a new backup path outside the state directory. The backup command refuses an existing destination, a destination physically nested in state, a live Supervisor lease, or an open state-owner handle. Run it with enough privilege to inspect protected `/proc/<pid>/fd` directories; the scanner targets the state directory owner's UID rather than the invoking UID, so running it as root does not skip the service account. When invoked as root for that scan, the command performs the backup and all SQLite writes with the state directory owner's effective UID/GID so a first migration cannot leave root-owned runtime state:
 
 ```bash
 sudo /usr/bin/node scripts/state-cutover.mjs \
