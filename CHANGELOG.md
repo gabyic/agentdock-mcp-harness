@@ -20,6 +20,9 @@ The project follows Semantic Versioning.
   at once; agents polling a long process made one call per check.
 
 ### Changed
+- The waiting, text and exec logic lives in `src/process-views.js` on top of the service's `start`/`output`, so it
+  works the same through the production Run Supervisor client (no supervisor protocol change, no IPC request held
+  open while waiting); `test/v05-01` runs every case both in-process and against a real supervisor daemon.
 - Defaults are unchanged for existing clients: `process.output` without the new options returns the same page, and
   `process.start` still echoes the command unless `echo: false`.
 

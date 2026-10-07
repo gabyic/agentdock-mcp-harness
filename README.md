@@ -268,6 +268,7 @@ The lower-level compatibility/debug surface remains available:
 - `process.start`
 - `process.status`
 - `process.output`
+- `process.exec`
 - `process.cancel`
 
 Process output is paged. New live output is retained in a bounded in-memory window, persisted diagnostic output keeps a bounded tail, and no normal output call is allowed to replay an unbounded command transcript. Live output remains faithful for debugging; persisted command/env/stdout/stderr diagnostic state is best-effort redacted before durable storage.

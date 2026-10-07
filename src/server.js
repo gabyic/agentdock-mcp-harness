@@ -1,7 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { AgentDockError } from "./errors.js";
-import { MAX_PROCESS_WAIT_MS, MAX_TAIL_LINES } from "./process-service.js";
+import {
+  MAX_PROCESS_WAIT_MS,
+  MAX_TAIL_LINES,
+  compactRecord,
+  execProcess,
+  textView,
+  waitForProcess,
+} from "./process-views.js";
 import { loadAgentDockConfig } from "./config.js";
 import { ApprovalService } from "./approval-service.js";
 import { AuditService } from "./audit-service.js";
@@ -810,7 +817,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
         env,
         idempotencyKey: idempotency_key,
       });
-      return toolResult(echo === false ? processService.compactRecord(started) : started);
+      return toolResult(echo === false ? compactRecord(started) : started);
     }),
   );
 
@@ -832,7 +839,7 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
     },
     safe(async ({ task_id, argv, shell, cwd, env, idempotency_key, wait_ms, tail_lines }) =>
       toolResult(
-        await processService.exec({
+        await execProcess(processService, {
           taskId: task_id,
           argv,
           shell,
@@ -882,20 +889,19 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
         throw new AgentDockError("INVALID_OUTPUT_VIEW", 'tail_lines needs view:"text".');
       }
       if (wait_ms !== undefined || until !== undefined) {
-        await processService.wait({
+        await waitForProcess(processService, {
           taskId: task_id,
           processId: process_id,
           cursor: cursor ?? 0,
           waitMs: wait_ms ?? 0,
           until: until ?? "output",
-          maxWaitMs: MAX_PROCESS_WAIT_MS,
         });
       }
       const args = { taskId: task_id, processId: process_id, cursor, maxBytes: max_bytes, maxChunks: max_chunks };
       return toolResult(
         view === "text"
-          ? processService.text({ ...args, tailLines: tail_lines })
-          : processService.output(args),
+          ? await textView(processService, { ...args, tailLines: tail_lines })
+          : await processService.output(args),
       );
     }),
   );
