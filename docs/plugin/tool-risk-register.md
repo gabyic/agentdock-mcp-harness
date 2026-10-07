@@ -26,6 +26,7 @@ All 42 tools must expose explicit readOnlyHint, destructiveHint, and openWorldHi
 | process.start | F | T | T | arbitrary command may be irreversible and reach internet |
 | process.status | T | F | F | reads process state |
 | process.output | T | F | F | reads stdout/stderr |
+| process.exec | F | T | T | process.start plus a bounded wait; same command risk as process.start |
 | process.cancel | F | T | F | terminates process group |
 | run.start | F | T | T | preferred async command execution surface |
 | run.get | T | F | F | reads bounded durable/live Run status and output |

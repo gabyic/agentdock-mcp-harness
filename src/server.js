@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { AgentDockError } from "./errors.js";
+import { MAX_PROCESS_WAIT_MS, MAX_TAIL_LINES } from "./process-service.js";
 import { loadAgentDockConfig } from "./config.js";
 import { ApprovalService } from "./approval-service.js";
 import { AuditService } from "./audit-service.js";
@@ -84,6 +85,7 @@ export const TOOL_RISK_PROFILES = Object.freeze({
   "process.start": { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   "process.status": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   "process.output": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  "process.exec": { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   "process.cancel": { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   "run.start": { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   "run.get": { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -797,16 +799,48 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
       cwd: z.string().optional(),
       env: z.record(z.string(), z.string()).optional(),
       idempotency_key: z.string().min(1).max(256).optional(),
+      echo: z.boolean().optional(),
     },
-    safe(async ({ task_id, argv, shell, cwd, env, idempotency_key }) =>
+    safe(async ({ task_id, argv, shell, cwd, env, idempotency_key, echo }) => {
+      const started = await processService.start({
+        taskId: task_id,
+        argv,
+        shell,
+        cwd,
+        env,
+        idempotencyKey: idempotency_key,
+      });
+      return toolResult(echo === false ? processService.compactRecord(started) : started);
+    }),
+  );
+
+  registerTool(
+    server,
+    "process.exec",
+    "Start a Task process and wait (default 30 s, max 60 s) for it to end; returns exit code and the last " +
+      "tail_lines (default 200) of stdout/stderr as text, without echoing the command. If it is still running " +
+      "at wait_ms, timed_out is true and it keeps running: continue with process.output from next_cursor.",
+    {
+      task_id: z.string().min(1),
+      argv: z.array(z.string()).min(1).optional(),
+      shell: z.string().min(1).optional(),
+      cwd: z.string().optional(),
+      env: z.record(z.string(), z.string()).optional(),
+      idempotency_key: z.string().min(1).max(256).optional(),
+      wait_ms: z.number().int().min(0).max(MAX_PROCESS_WAIT_MS).optional(),
+      tail_lines: z.number().int().min(1).max(MAX_TAIL_LINES).optional(),
+    },
+    safe(async ({ task_id, argv, shell, cwd, env, idempotency_key, wait_ms, tail_lines }) =>
       toolResult(
-        await processService.start({
+        await processService.exec({
           taskId: task_id,
           argv,
           shell,
           cwd,
           env,
           idempotencyKey: idempotency_key,
+          waitMs: wait_ms,
+          tailLines: tail_lines,
         }),
       )),
   );
@@ -828,24 +862,42 @@ export function createAgentDockServer({ stateDir, runtime, config } = {}) {
   registerTool(
     server,
     "process.output",
-    "Read bounded process stdout/stderr incrementally from a pull cursor.",
+    "Read bounded process stdout/stderr incrementally from a pull cursor. wait_ms (max 60 s) blocks until new " +
+      "output arrives, or with until:\"exit\" until the process ends. view:\"text\" returns stdout/stderr " +
+      "strings once instead of the chunk array; tail_lines (text view) reads everything available and keeps " +
+      "only the last lines.",
     {
       task_id: z.string().min(1),
       process_id: z.string().min(1),
       cursor: z.number().int().min(0).optional(),
       max_bytes: z.number().int().min(16384).max(32768).optional(),
       max_chunks: z.number().int().min(1).max(128).optional(),
+      wait_ms: z.number().int().min(0).max(MAX_PROCESS_WAIT_MS).optional(),
+      until: z.enum(["output", "exit"]).optional(),
+      view: z.enum(["full", "text"]).optional(),
+      tail_lines: z.number().int().min(1).max(MAX_TAIL_LINES).optional(),
     },
-    safe(async ({ task_id, process_id, cursor, max_bytes, max_chunks }) =>
-      toolResult(
-        await processService.output({
+    safe(async ({ task_id, process_id, cursor, max_bytes, max_chunks, wait_ms, until, view, tail_lines }) => {
+      if (tail_lines !== undefined && view !== "text") {
+        throw new AgentDockError("INVALID_OUTPUT_VIEW", 'tail_lines needs view:"text".');
+      }
+      if (wait_ms !== undefined || until !== undefined) {
+        await processService.wait({
           taskId: task_id,
           processId: process_id,
-          cursor,
-          maxBytes: max_bytes,
-          maxChunks: max_chunks,
-        }),
-      )),
+          cursor: cursor ?? 0,
+          waitMs: wait_ms ?? 0,
+          until: until ?? "output",
+          maxWaitMs: MAX_PROCESS_WAIT_MS,
+        });
+      }
+      const args = { taskId: task_id, processId: process_id, cursor, maxBytes: max_bytes, maxChunks: max_chunks };
+      return toolResult(
+        view === "text"
+          ? processService.text({ ...args, tailLines: tail_lines })
+          : processService.output(args),
+      );
+    }),
   );
 
   registerTool(

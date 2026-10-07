@@ -12,6 +12,8 @@ const MAX_OUTPUT_PAGE_CHUNKS = 128;
 const DEFAULT_LIVE_OUTPUT_BYTES = 1024 * 1024;
 const DEFAULT_LEASE_HEARTBEAT_MS = 1000;
 const DEFAULT_LEASE_STALE_MS = 30000;
+export const MAX_PROCESS_WAIT_MS = 60000;
+export const MAX_TAIL_LINES = 2000;
 const REGISTRATION_ABORT_GRACE_MS = 250;
 const REGISTRATION_ABORT_KILL_WAIT_MS = 1000;
 
@@ -46,6 +48,17 @@ function outputBytes(chunks) {
     (total, chunk) => total + Buffer.byteLength(String(chunk.text ?? ""), "utf8"),
     0,
   );
+}
+
+function tailLines(text, keep) {
+  // The last `keep` lines of `text` (a trailing newline does not count as an extra empty line),
+  // and how many lines were dropped in front of them.
+  if (!text) return { text: "", dropped: 0 };
+  const body = text.endsWith("\n") ? text.slice(0, -1) : text;
+  const lines = body.split("\n");
+  if (lines.length <= keep) return { text, dropped: 0 };
+  const kept = lines.slice(lines.length - keep).join("\n");
+  return { text: text.endsWith("\n") ? kept + "\n" : kept, dropped: lines.length - keep };
 }
 
 function terminalStatus(status) {
@@ -376,6 +389,11 @@ export class ProcessService {
       cwd: record.cwd,
       env: record.env,
     };
+  }
+
+  compactRecord(record) {
+    const { mode: _mode, argv: _argv, shell: _shell, cwd: _cwd, env: _env, ...rest } = record;
+    return rest;
   }
 
   summariesForTask(taskId, { limit, compact = false } = {}) {
@@ -1057,12 +1075,17 @@ export class ProcessService {
     waitMs = 5000,
     maxBytes = DEFAULT_OUTPUT_PAGE_BYTES,
     maxChunks = DEFAULT_OUTPUT_PAGE_CHUNKS,
+    until = "output",
+    maxWaitMs = 10000,
   }) {
-    if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 10000) {
+    if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > maxWaitMs) {
       throw new AgentDockError(
         "INVALID_WAIT_TIMEOUT",
-        "wait_ms must be an integer between 0 and 10000.",
+        `wait_ms must be an integer between 0 and ${maxWaitMs}.`,
       );
+    }
+    if (until !== "output" && until !== "exit") {
+      throw new AgentDockError("INVALID_WAIT_UNTIL", 'until must be "output" or "exit".');
     }
 
     const deadline = Date.now() + waitMs;
@@ -1075,7 +1098,7 @@ export class ProcessService {
         maxChunks,
       });
       if (
-        page.chunks.length > 0 ||
+        (until === "output" && page.chunks.length > 0) ||
         terminalStatus(page.status) ||
         Date.now() >= deadline
       ) {
@@ -1086,6 +1109,67 @@ export class ProcessService {
       }
       await sleep(Math.min(100, Math.max(1, deadline - Date.now())));
     }
+  }
+
+  text({ taskId, processId, cursor = 0, maxBytes, maxChunks, tailLines: keep }) {
+    // Plain-text view of process output: stdout/stderr strings once, no chunk array. With tailLines it reads
+    // everything available from the cursor and keeps only the last lines of each stream.
+    if (keep !== undefined && (!Number.isInteger(keep) || keep < 1 || keep > MAX_TAIL_LINES)) {
+      throw new AgentDockError("INVALID_TAIL_LINES", `tail_lines must be an integer between 1 and ${MAX_TAIL_LINES}.`);
+    }
+    let page = this.output({ taskId, processId, cursor, maxBytes, maxChunks });
+    let chunks = page.chunks;
+    if (keep !== undefined) {
+      chunks = [...page.chunks];
+      while (page.has_more) {
+        page = this.output({ taskId, processId, cursor: page.next_cursor, maxBytes: MAX_OUTPUT_PAGE_BYTES, maxChunks: MAX_OUTPUT_PAGE_CHUNKS });
+        chunks.push(...page.chunks);
+      }
+    }
+    const join = (stream) => chunks.filter((c) => c.stream === stream).map((c) => c.text).join("");
+    let stdout = join("stdout");
+    let stderr = join("stderr");
+    const result = {
+      process_id: processId,
+      status: page.status,
+      exit_code: page.exit_code,
+      signal: page.signal,
+      next_cursor: page.next_cursor,
+      has_more: page.has_more,
+    };
+    if (keep !== undefined) {
+      const out = tailLines(stdout, keep);
+      const err = tailLines(stderr, keep);
+      stdout = out.text;
+      stderr = err.text;
+      if (out.dropped) result.stdout_lines_dropped = out.dropped;
+      if (err.dropped) result.stderr_lines_dropped = err.dropped;
+    }
+    result.stdout = stdout;
+    result.stderr = stderr;
+    for (const flag of ["truncated_before_cursor", "live_output_truncated", "persisted_output_truncated"]) {
+      if (page[flag]) result[flag] = true;
+    }
+    return result;
+  }
+
+  async exec({ taskId, argv, shell, cwd, env, idempotencyKey, waitMs = 30000, tailLines: keep = 200 }) {
+    // Start a process and wait for it to end (or for waitMs), returning the tail of its output. A process that
+    // outlives waitMs keeps running; the caller continues with process.output from next_cursor.
+    if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > MAX_PROCESS_WAIT_MS) {
+      throw new AgentDockError("INVALID_WAIT_TIMEOUT", `wait_ms must be an integer between 0 and ${MAX_PROCESS_WAIT_MS}.`);
+    }
+    const started = await this.start({ taskId, argv, shell, cwd, env, idempotencyKey });
+    const waited = await this.wait({
+      taskId, processId: started.process_id, waitMs, until: "exit", maxWaitMs: MAX_PROCESS_WAIT_MS,
+    });
+    const text = this.text({ taskId, processId: started.process_id, tailLines: keep });
+    return {
+      ...this.compactRecord(started),
+      ...text,
+      started_at: started.started_at,
+      timed_out: !terminalStatus(waited.status),
+    };
   }
 
   cancel({ taskId, processId }) {

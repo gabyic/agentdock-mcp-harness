@@ -6,6 +6,23 @@ The project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+- `process.exec`: start a Task process and wait (default 30 s, max 60 s) for it to end in one call; returns the exit
+  code and the last `tail_lines` (default 200) of stdout/stderr as text, without echoing the command. A process that
+  outlives `wait_ms` keeps running (`timed_out: true`) and is continued with `process.output` from `next_cursor`.
+- `process.output` options: `wait_ms` (max 60 s) blocks until new output arrives, or with `until: "exit"` until the
+  process ends; `view: "text"` returns `stdout`/`stderr` strings once instead of the chunk array plus the joined
+  copies; `tail_lines` (text view) reads everything available and keeps only the last lines.
+- `process.start` option `echo: false` returns the status without echoing `argv`/`shell`/`cwd`/`env` back.
+
+### Fixed
+- `process.output` silently ignored `wait_ms` (the schema had no such field, so it was stripped) and always returned
+  at once; agents polling a long process made one call per check.
+
+### Changed
+- Defaults are unchanged for existing clients: `process.output` without the new options returns the same page, and
+  `process.start` still echoes the command unless `echo: false`.
+
 ## [0.4.0-dev.1] - 2026-09-23
 
 ### Added
